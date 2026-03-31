@@ -8,15 +8,18 @@
         "uid": { "type": "string", "description": "Firebase Auth UID" },
         "name": { "type": "string", "description": "Display name" },
         "age": { "type": "integer", "description": "User age" },
+        "gender": { "type": "string", "enum": ["male", "female", "other"], "description": "User gender" },
         "location": { "type": "string", "description": "User location" },
         "bio": { "type": "string", "description": "User biography" },
-        "image": { "type": "string", "description": "Profile image URL" },
+        "images": { "type": "array", "items": { "type": "string" }, "description": "Gallery of profile images (min 2)" },
         "interests": { "type": "array", "items": { "type": "string" }, "description": "List of interests" },
         "isVerified": { "type": "boolean", "description": "Whether the user is verified" },
         "isPremium": { "type": "boolean", "description": "Whether the user has premium status" },
+        "isOnline": { "type": "boolean", "description": "Current online status" },
+        "lastSeen": { "type": "string", "format": "date-time", "description": "Last activity timestamp" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
       },
-      "required": ["uid", "name", "age", "location"]
+      "required": ["uid", "name", "age", "gender", "location", "images"]
     },
     "Message": {
       "title": "Message",
@@ -39,6 +42,20 @@
         "timestamp": { "type": "string", "format": "date-time", "description": "When the match occurred" }
       },
       "required": ["users", "timestamp"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "User notification",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the recipient" },
+        "type": { "type": "string", "enum": ["match", "message", "like"], "description": "Type of notification" },
+        "fromUserId": { "type": "string", "description": "UID of the sender/trigger" },
+        "text": { "type": "string", "description": "Notification message" },
+        "read": { "type": "boolean", "description": "Whether the notification has been read" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the notification was created" }
+      },
+      "required": ["userId", "type", "fromUserId", "text", "read", "timestamp"]
     }
   },
   "firestore": {
@@ -53,6 +70,10 @@
     "/matches/{matchId}": {
       "schema": "Match",
       "description": "Matches between users"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications"
     }
   }
 }

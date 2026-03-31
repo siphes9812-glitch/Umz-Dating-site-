@@ -17,7 +17,16 @@ import {
   Crown,
   ChevronRight,
   Star,
-  AlertCircle
+  AlertCircle,
+  Mail,
+  Lock,
+  Camera,
+  Plus,
+  Trash2,
+  Bell,
+  Eye,
+  EyeOff,
+  Image as ImageIcon
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { User as UserType, MOCK_PROFILES } from './types';
@@ -40,6 +49,9 @@ import {
   GoogleAuthProvider, 
   onAuthStateChanged, 
   signOut,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   User as FirebaseUser 
 } from 'firebase/auth';
 import { 
@@ -133,7 +145,12 @@ const AuthContext = createContext<{
   user: FirebaseUser | null;
   profile: UserType | null;
   loading: boolean;
+  isSigningIn: boolean;
+  signInError: string | null;
   signIn: () => Promise<void>;
+  login: (email: string, pass: string) => Promise<void>;
+  register: (email: string, pass: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
 } | null>(null);
 
@@ -142,13 +159,22 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [profile, setProfile] = useState<UserType | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
 
   useEffect(() => {
+    let statusUnsubscribe: any;
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
         const userDoc = doc(db, 'users', u.uid);
-        onSnapshot(userDoc, (snap) => {
+        
+        // Update online status
+        await setDoc(userDoc, { 
+          isOnline: true, 
+          lastSeen: serverTimestamp() 
+        }, { merge: true }).catch(err => console.error("Error updating online status", err));
+
+        statusUnsubscribe = onSnapshot(userDoc, (snap) => {
           if (snap.exists()) {
             setProfile({ id: snap.id, ...snap.data() } as UserType);
           } else {
@@ -162,38 +188,89 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
     });
 
-    // Test connection
-    const testConnection = async () => {
-      try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
-        }
+    // Handle offline status on window close
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'hidden' && auth.currentUser) {
+        const userDoc = doc(db, 'users', auth.currentUser.uid);
+        await setDoc(userDoc, { 
+          isOnline: false, 
+          lastSeen: serverTimestamp() 
+        }, { merge: true }).catch(err => console.error("Error updating offline status", err));
+      } else if (document.visibilityState === 'visible' && auth.currentUser) {
+        const userDoc = doc(db, 'users', auth.currentUser.uid);
+        await setDoc(userDoc, { 
+          isOnline: true, 
+          lastSeen: serverTimestamp() 
+        }, { merge: true }).catch(err => console.error("Error updating online status", err));
       }
     };
-    testConnection();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (statusUnsubscribe) statusUnsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   const signIn = async () => {
     if (isSigningIn) return;
     setIsSigningIn(true);
+    setSignInError(null);
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
     } catch (error: any) {
       if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
         console.error("Sign in error", error);
+        setSignInError(error.message || "An error occurred during sign in.");
       }
     } finally {
       setIsSigningIn(false);
     }
   };
 
+  const login = async (email: string, pass: string) => {
+    setIsSigningIn(true);
+    setSignInError(null);
+    try {
+      await signInWithEmailAndPassword(auth, email, pass);
+    } catch (error: any) {
+      setSignInError(error.message);
+      throw error;
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const register = async (email: string, pass: string) => {
+    setIsSigningIn(true);
+    setSignInError(null);
+    try {
+      await createUserWithEmailAndPassword(auth, email, pass);
+    } catch (error: any) {
+      setSignInError(error.message);
+      throw error;
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (error: any) {
+      setSignInError(error.message);
+      throw error;
+    }
+  };
+
   const logout = async () => {
     try {
+      if (user) {
+        const userDoc = doc(db, 'users', user.uid);
+        await setDoc(userDoc, { isOnline: false, lastSeen: serverTimestamp() }, { merge: true });
+      }
       await signOut(auth);
     } catch (error) {
       console.error("Logout error", error);
@@ -201,7 +278,10 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, logout }}>
+    <AuthContext.Provider value={{ 
+      user, profile, loading, isSigningIn, signInError, 
+      signIn, login, register, resetPassword, logout 
+    }}>
       {children}
     </AuthContext.Provider>
   );
@@ -330,7 +410,31 @@ const Navbar = ({ activeTab, setActiveTab }: any) => {
   );
 };
 
-const Hero = ({ onSignIn }: { onSignIn: () => void }) => {
+const Hero = () => {
+  const { signIn, login, register, resetPassword, isSigningIn, signInError } = useAuth();
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSuccessMsg(null);
+    try {
+      if (mode === 'signin') {
+        await login(email, password);
+      } else if (mode === 'signup') {
+        await register(email, password);
+      } else {
+        await resetPassword(email);
+        setSuccessMsg("Password reset email sent! Check your inbox.");
+      }
+    } catch (err) {
+      // Error is handled by AuthProvider and displayed via signInError
+    }
+  };
+
   return (
     <section className="relative min-h-[calc(100vh-64px)] flex flex-col items-center justify-center px-4 py-8 overflow-hidden">
       {/* Subtle Background Elements */}
@@ -353,37 +457,109 @@ const Hero = ({ onSignIn }: { onSignIn: () => void }) => {
             The premium dating experience in uMzimkhulu
           </p>
 
-          <div className="bg-white rounded-[24px] p-6 shadow-2xl shadow-black/5 border border-slate-100 mb-6">
-            <div className="space-y-6 mb-8">
-              {[
-                { icon: ShieldCheck, title: 'Verified & Secure Community', color: 'bg-blue-50 text-blue-500' },
-                { icon: Star, title: 'Premium Matching Algorithm', color: 'bg-yellow-50 text-yellow-500' },
-                { icon: Heart, title: 'Real Connections in uMzimkhulu', color: 'bg-red-50 text-red-500' },
-              ].map((item, i) => (
-                <motion.div 
-                  key={i}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.2 + i * 0.1 }}
-                  className="flex items-center gap-4 text-left"
-                >
-                  <div className={cn("w-11 h-11 rounded-xl flex items-center justify-center shrink-0", item.color)}>
-                    <item.icon size={20} />
+          <div className="bg-white rounded-[32px] p-8 shadow-2xl shadow-black/5 border border-slate-100 mb-6">
+            <h2 className="text-2xl font-bold mb-6 text-slate-800">
+              {mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Create Account' : 'Reset Password'}
+            </h2>
+
+            <form onSubmit={handleSubmit} className="space-y-4 mb-6">
+              <div className="text-left">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">Email Address</label>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input 
+                    type="email" 
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="your@email.com"
+                    className="w-full pl-12 pr-4 py-3 rounded-xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
+                  />
+                </div>
+              </div>
+
+              {mode !== 'forgot' && (
+                <div className="text-left">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">Password</label>
+                  <div className="relative">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input 
+                      type={showPassword ? "text" : "password"} 
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full pl-12 pr-12 py-3 rounded-xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary transition-colors"
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
                   </div>
-                  <span className="text-base font-semibold text-slate-700">
-                    {item.title}
-                  </span>
-                </motion.div>
-              ))}
+                </div>
+              )}
+
+              {mode === 'signin' && (
+                <div className="text-right">
+                  <button 
+                    type="button"
+                    onClick={() => setMode('forgot')}
+                    className="text-xs font-semibold text-primary hover:underline"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
+              )}
+
+              <button 
+                type="submit"
+                disabled={isSigningIn}
+                className="w-full btn-primary py-3.5 text-sm font-bold shadow-lg shadow-primary/20"
+              >
+                {isSigningIn ? 'Processing...' : mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Sign Up' : 'Send Reset Link'}
+              </button>
+            </form>
+
+            <div className="relative mb-6">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
+              <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-slate-400 font-medium">Or continue with</span></div>
             </div>
 
             <button 
-              onClick={onSignIn}
-              className="w-full flex items-center justify-center gap-3 py-3 px-6 rounded-xl border border-slate-200 hover:bg-slate-50 transition-all group text-sm"
+              onClick={signIn}
+              disabled={isSigningIn}
+              className="w-full flex items-center justify-center gap-3 py-3 px-6 rounded-xl border border-slate-200 hover:bg-slate-50 transition-all group text-sm disabled:opacity-50"
             >
               <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
-              <span className="font-bold text-slate-700">Continue with Google</span>
+              <span className="font-bold text-slate-700">Google</span>
             </button>
+
+            {mode === 'signin' ? (
+              <p className="mt-6 text-sm text-slate-500">
+                Don't have an account? <button onClick={() => setMode('signup')} className="text-primary font-bold hover:underline">Sign Up</button>
+              </p>
+            ) : (
+              <p className="mt-6 text-sm text-slate-500">
+                Already have an account? <button onClick={() => setMode('signin')} className="text-primary font-bold hover:underline">Sign In</button>
+              </p>
+            )}
+
+            {signInError && (
+              <div className="mt-4 p-3 bg-red-500/10 border border-red-500/50 rounded-xl text-red-500 text-xs flex items-center gap-2">
+                <AlertCircle size={14} className="shrink-0" />
+                <span className="text-left">{signInError}</span>
+              </div>
+            )}
+
+            {successMsg && (
+              <div className="mt-4 p-3 bg-green-500/10 border border-green-500/50 rounded-xl text-green-600 text-xs flex items-center gap-2">
+                <CheckCircle2 size={14} className="shrink-0" />
+                <span className="text-left">{successMsg}</span>
+              </div>
+            )}
           </div>
         </motion.div>
       </div>
@@ -399,7 +575,7 @@ const ProfileCard = ({ user, onLike, onPass }: { user: UserType, onLike: () => v
     >
       <div className="aspect-[3/4] overflow-hidden relative">
         <img 
-          src={user.image} 
+          src={user.images?.[0] || `https://picsum.photos/seed/${user.id}/400/600`} 
           alt={user.name} 
           className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
           referrerPolicy="no-referrer"
@@ -529,7 +705,7 @@ const Dashboard = () => {
               <div key={i} className="flex items-center gap-4">
                 <div className="relative">
                   <img 
-                    src={profile.image} 
+                    src={profile.images?.[0] || `https://picsum.photos/seed/${profile.id}/400/600`} 
                     alt={profile.name} 
                     className="w-12 h-12 rounded-full object-cover"
                     referrerPolicy="no-referrer"
@@ -649,7 +825,7 @@ const Chat = () => {
                 selectedMatch?.id === match.id && "bg-primary/5 border-l-4 border-l-primary"
               )}
             >
-              <img src={match.otherUser.image} alt={match.otherUser.name} className="w-12 h-12 rounded-full object-cover" referrerPolicy="no-referrer" />
+              <img src={match.otherUser.images?.[0] || `https://picsum.photos/seed/${match.otherUser.id}/200/200`} alt={match.otherUser.name} className="w-12 h-12 rounded-full object-cover" referrerPolicy="no-referrer" />
               <div className="flex-1 text-left">
                 <div className="flex justify-between items-center mb-1">
                   <h5 className="font-bold text-sm">{match.otherUser.name}</h5>
@@ -672,7 +848,7 @@ const Chat = () => {
           <>
             <div className="p-4 border-b border-inherit flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <img src={selectedMatch.otherUser.image} alt={selectedMatch.otherUser.name} className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
+                <img src={selectedMatch.otherUser.images?.[0] || `https://picsum.photos/seed/${selectedMatch.otherUser.id}/200/200`} alt={selectedMatch.otherUser.name} className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
                 <div>
                   <h5 className="font-bold text-sm">{selectedMatch.otherUser.name}</h5>
                   <p className="text-[10px] text-green-500 font-medium">Online</p>
@@ -803,39 +979,80 @@ const SignupModal = ({ isOpen, onClose }: any) => {
     height: '',
     education: '',
     zodiac: '',
-    hobbies: [] as string[]
+    hobbies: [] as string[],
+    images: [] as string[]
   });
   const { user } = useAuth();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData(prev => ({
+          ...prev,
+          images: [...prev.images, reader.result as string]
+        }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      images: prev.images.filter((_, i) => i !== index)
+    }));
+  };
 
   const handleComplete = async () => {
     if (!user) return;
+    if (formData.images.length < 2) {
+      alert("Please upload at least 2 profile images.");
+      return;
+    }
+    setIsSubmitting(true);
     try {
       await setDoc(doc(db, 'users', user.uid), {
         uid: user.uid,
         name: formData.name || user.displayName || 'User',
         age: parseInt(formData.age) || 20,
-        gender: formData.gender || 'Not specified',
-        lookingFor: formData.lookingFor || 'Everyone',
+        gender: formData.gender || 'other',
+        lookingFor: formData.lookingFor || 'Both',
         location: 'uMzimkhulu Central',
         bio: formData.bio || 'New member!',
         height: formData.height || 'Not specified',
         education: formData.education || 'Not specified',
         zodiac: formData.zodiac || 'Not specified',
-        image: user.photoURL || `https://picsum.photos/seed/${user.uid}/400/600`,
+        images: formData.images,
         interests: formData.hobbies.length > 0 ? formData.hobbies : ['Music', 'Travel'],
         isVerified: false,
         isPremium: false,
+        isOnline: true,
+        lastSeen: serverTimestamp(),
         createdAt: serverTimestamp()
       }, { merge: true });
       onClose();
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   if (!isOpen) return null;
 
   const totalSteps = 5;
+
+  const isStepValid = () => {
+    if (step === 1) return formData.name && formData.age;
+    if (step === 2) return formData.gender && formData.lookingFor;
+    if (step === 3) return formData.height && formData.education;
+    if (step === 4) return formData.zodiac && formData.bio;
+    if (step === 5) return formData.images.length >= 2;
+    return true;
+  };
 
   return (
     <motion.div
@@ -847,16 +1064,16 @@ const SignupModal = ({ isOpen, onClose }: any) => {
       <motion.div
         initial={{ scale: 0.9, y: 20 }}
         animate={{ scale: 1, y: 0 }}
-        className="max-w-md w-full rounded-[40px] overflow-hidden relative bg-white"
+        className="max-w-md w-full rounded-[40px] overflow-hidden relative bg-white shadow-2xl"
       >
-        <button onClick={onClose} className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full transition-colors">
+        <button onClick={onClose} className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full transition-colors z-10">
           <X size={20} />
         </button>
 
         <div className="p-8">
-          <div className="flex gap-2 mb-6">
+          <div className="flex gap-2 mb-8">
             {[1, 2, 3, 4, 5].map(s => (
-              <div key={s} className={cn("h-1 flex-1 rounded-full transition-all", s <= step ? "bg-primary" : "bg-slate-200")} />
+              <div key={s} className={cn("h-1.5 flex-1 rounded-full transition-all duration-500", s <= step ? "bg-primary" : "bg-slate-100")} />
             ))}
           </div>
 
@@ -868,27 +1085,30 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
               >
-                <h3 className="text-xl font-bold mb-1">Welcome to Love Link</h3>
-                <p className="text-slate-500 text-sm mb-6">Let's start with the basics.</p>
-                <div className="space-y-3">
+                <h3 className="text-2xl font-bold mb-2">Welcome to Love Link</h3>
+                <p className="text-slate-500 text-sm mb-8">Let's start with the basics.</p>
+                <div className="space-y-5">
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">Full Name</label>
-                    <input 
-                      type="text" 
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      placeholder="e.g. Thando Dlamini"
-                      className="w-full px-4 py-3 rounded-xl outline-none border border-transparent bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
-                    />
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Full Name</label>
+                    <div className="relative">
+                      <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                      <input 
+                        type="text" 
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        placeholder="e.g. Thando Dlamini"
+                        className="w-full pl-12 pr-4 py-3.5 rounded-2xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
+                      />
+                    </div>
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">Age</label>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Age</label>
                     <input 
                       type="number" 
                       value={formData.age}
                       onChange={(e) => setFormData({ ...formData, age: e.target.value })}
                       placeholder="Must be 18+"
-                      className="w-full px-4 py-3 rounded-xl outline-none border border-transparent bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
+                      className="w-full px-4 py-3.5 rounded-2xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
                     />
                   </div>
                 </div>
@@ -902,19 +1122,19 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
               >
-                <h3 className="text-xl font-bold mb-1">Your Identity</h3>
-                <p className="text-slate-500 text-sm mb-6">Tell us about yourself and who you're seeking.</p>
-                <div className="space-y-4">
+                <h3 className="text-2xl font-bold mb-2">Your Identity</h3>
+                <p className="text-slate-500 text-sm mb-8">Tell us about yourself and who you're seeking.</p>
+                <div className="space-y-6">
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">I am a</label>
-                    <div className="grid grid-cols-2 gap-3">
-                      {['Male', 'Female'].map(g => (
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">I am a</label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {['male', 'female', 'other'].map(g => (
                         <button 
                           key={g}
                           onClick={() => setFormData({ ...formData, gender: g })}
                           className={cn(
-                            "p-3 rounded-xl border font-bold text-sm transition-all",
-                            formData.gender === g ? "border-primary bg-primary/5 text-primary" : "border-slate-200 hover:border-primary"
+                            "p-3.5 rounded-2xl border font-bold text-sm transition-all capitalize",
+                            formData.gender === g ? "border-primary bg-primary/5 text-primary" : "border-slate-100 hover:border-primary"
                           )}
                         >
                           {g}
@@ -923,15 +1143,15 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                     </div>
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">Looking for</label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Looking for</label>
+                    <div className="grid grid-cols-3 gap-3">
                       {['Men', 'Women', 'Both'].map(l => (
                         <button 
                           key={l}
                           onClick={() => setFormData({ ...formData, lookingFor: l })}
                           className={cn(
-                            "py-2 rounded-lg border font-semibold text-xs transition-all",
-                            formData.lookingFor === l ? "border-primary bg-primary/5 text-primary" : "border-slate-200 hover:border-primary"
+                            "p-3.5 rounded-2xl border font-bold text-sm transition-all",
+                            formData.lookingFor === l ? "border-primary bg-primary/5 text-primary" : "border-slate-100 hover:border-primary"
                           )}
                         >
                           {l}
@@ -950,25 +1170,25 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
               >
-                <h3 className="text-xl font-bold mb-1">Physical & Education</h3>
-                <p className="text-slate-500 text-sm mb-6">A bit more detail helps with matching.</p>
-                <div className="space-y-3">
+                <h3 className="text-2xl font-bold mb-2">Physical & Education</h3>
+                <p className="text-slate-500 text-sm mb-8">A bit more detail helps with matching.</p>
+                <div className="space-y-5">
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">Height (cm)</label>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Height (cm)</label>
                     <input 
                       type="text" 
                       value={formData.height}
                       onChange={(e) => setFormData({ ...formData, height: e.target.value })}
                       placeholder="e.g. 175"
-                      className="w-full px-4 py-3 rounded-xl outline-none border border-transparent bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
+                      className="w-full px-4 py-3.5 rounded-2xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">Education</label>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Education</label>
                     <select 
                       value={formData.education}
                       onChange={(e) => setFormData({ ...formData, education: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl outline-none border border-transparent bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
+                      className="w-full px-4 py-3.5 rounded-2xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm appearance-none"
                     >
                       <option value="">Select Education</option>
                       <option value="High School">High School</option>
@@ -989,15 +1209,15 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
               >
-                <h3 className="text-xl font-bold mb-1">Personality</h3>
-                <p className="text-slate-500 text-sm mb-6">What makes you, you?</p>
-                <div className="space-y-3">
+                <h3 className="text-2xl font-bold mb-2">Personality</h3>
+                <p className="text-slate-500 text-sm mb-8">What makes you, you?</p>
+                <div className="space-y-5">
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">Zodiac Sign</label>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Zodiac Sign</label>
                     <select 
                       value={formData.zodiac}
                       onChange={(e) => setFormData({ ...formData, zodiac: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl outline-none border border-transparent bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm"
+                      className="w-full px-4 py-3.5 rounded-2xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm appearance-none"
                     >
                       <option value="">Select Sign</option>
                       {['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces'].map(z => (
@@ -1006,12 +1226,12 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">Bio</label>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Bio</label>
                     <textarea 
                       value={formData.bio}
                       onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
                       placeholder="Tell us something interesting..."
-                      className="w-full px-4 py-3 rounded-xl outline-none border border-transparent bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm h-24 resize-none"
+                      className="w-full px-4 py-3.5 rounded-2xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm h-28 resize-none"
                     />
                   </div>
                 </div>
@@ -1025,38 +1245,55 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
               >
-                <h3 className="text-xl font-bold mb-1">Final Touch</h3>
-                <p className="text-slate-500 text-sm mb-6">Add a photo to get 3x more matches.</p>
-                <div className="w-full aspect-square rounded-2xl border-2 border-dashed border-slate-300 flex flex-col items-center justify-center gap-3 cursor-pointer hover:bg-black/5 transition-all mb-6">
-                  {user?.photoURL ? (
-                    <img src={user.photoURL} className="w-full h-full object-cover rounded-2xl" alt="Preview" />
-                  ) : (
-                    <>
-                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                        <UserIcon size={24} />
-                      </div>
-                      <span className="text-xs font-medium text-slate-500">Upload Profile Photo</span>
-                    </>
+                <h3 className="text-2xl font-bold mb-2">Profile Gallery</h3>
+                <p className="text-slate-500 text-sm mb-6">Upload at least 2 photos to complete your profile.</p>
+                
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  {formData.images.map((img, idx) => (
+                    <div key={idx} className="relative aspect-[3/4] rounded-2xl overflow-hidden group">
+                      <img src={img} className="w-full h-full object-cover" alt={`Gallery ${idx}`} />
+                      <button 
+                        onClick={() => removeImage(idx)}
+                        className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  {formData.images.length < 6 && (
+                    <label className="aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-slate-50 transition-all">
+                      <Plus size={24} className="text-slate-400" />
+                      <span className="text-[10px] font-bold uppercase text-slate-400">Add Photo</span>
+                      <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                    </label>
                   )}
                 </div>
+                
+                {formData.images.length < 2 && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-amber-600 text-[10px] font-medium">
+                    <AlertCircle size={14} />
+                    <span>Minimum 2 photos required to continue</span>
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
 
-          <div className="flex gap-3 mt-8">
+          <div className="flex gap-4 mt-10">
             {step > 1 && (
               <button 
                 onClick={() => setStep(step - 1)}
-                className="flex-1 py-3 rounded-xl font-bold border border-slate-200 hover:bg-slate-50 transition-all text-sm"
+                className="flex-1 py-4 rounded-2xl font-bold border border-slate-100 hover:bg-slate-50 transition-all text-sm"
               >
                 Back
               </button>
             )}
             <button 
               onClick={() => step < totalSteps ? setStep(step + 1) : handleComplete()}
-              className="flex-[2] btn-primary py-3 text-sm"
+              disabled={!isStepValid() || isSubmitting}
+              className="flex-[2] btn-primary py-4 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/20"
             >
-              {step === totalSteps ? 'Complete Profile' : 'Continue'}
+              {isSubmitting ? 'Saving...' : step === totalSteps ? 'Complete Profile' : 'Continue'}
             </button>
           </div>
         </div>
@@ -1082,7 +1319,7 @@ function AppContent() {
   const [showMatch, setShowMatch] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
   const [profiles, setProfiles] = useState<UserType[]>(MOCK_PROFILES);
-  const { user, profile, loading, signIn } = useAuth();
+  const { user, profile, loading, isSigningIn, signInError, signIn } = useAuth();
 
   useEffect(() => {
     // If user is signed in and on home, redirect to discover
@@ -1155,7 +1392,7 @@ function AppContent() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              <Hero onSignIn={signIn} />
+              <Hero onSignIn={signIn} isSigningIn={isSigningIn} signInError={signInError} />
             </motion.div>
           )}
 
@@ -1239,7 +1476,7 @@ function AppContent() {
                     <img src={user?.photoURL || "https://picsum.photos/seed/me/200/200"} className="w-16 h-16 rounded-full border-4 border-slate-100 object-cover" referrerPolicy="no-referrer" />
                   </div>
                   <div className="relative">
-                    <img src={MOCK_PROFILES[0].image} className="w-16 h-16 rounded-full border-4 border-slate-100 object-cover" referrerPolicy="no-referrer" />
+                    <img src={MOCK_PROFILES[0].images?.[0]} className="w-16 h-16 rounded-full border-4 border-slate-100 object-cover" referrerPolicy="no-referrer" />
                   </div>
                 </div>
                 

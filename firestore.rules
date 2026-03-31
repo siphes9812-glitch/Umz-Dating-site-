@@ -55,27 +55,32 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'name', 'age', 'location', 'createdAt']) &&
-             data.keys().hasOnly(['uid', 'name', 'age', 'gender', 'lookingFor', 'location', 'bio', 'height', 'education', 'zodiac', 'image', 'interests', 'isVerified', 'isPremium', 'createdAt', 'role']) &&
+      return data.keys().hasAll(['uid', 'name', 'age', 'gender', 'location', 'images', 'createdAt']) &&
+             data.keys().hasOnly(['uid', 'name', 'age', 'gender', 'lookingFor', 'location', 'bio', 'height', 'education', 'zodiac', 'images', 'interests', 'isVerified', 'isPremium', 'isOnline', 'lastSeen', 'createdAt', 'role']) &&
              data.uid is string && data.uid == request.auth.uid &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
              data.age is number && data.age >= 18 && data.age <= 120 &&
-             (!('gender' in data) || (data.gender is string && data.gender.size() <= 20)) &&
+             data.gender is string && data.gender in ['male', 'female', 'other'] &&
              (!('lookingFor' in data) || (data.lookingFor is string && data.lookingFor.size() <= 20)) &&
              data.location is string && data.location.size() > 0 && data.location.size() <= 100 &&
              (!('bio' in data) || (data.bio is string && data.bio.size() <= 500)) &&
              (!('height' in data) || (data.height is string && data.height.size() <= 20)) &&
              (!('education' in data) || (data.education is string && data.education.size() <= 50)) &&
              (!('zodiac' in data) || (data.zodiac is string && data.zodiac.size() <= 20)) &&
-             (!('image' in data) || (data.image is string && data.image.size() <= 1000)) &&
+             data.images is list && data.images.size() >= 2 && data.images.size() <= 10 &&
              (!('interests' in data) || (data.interests is list && data.interests.size() <= 20)) &&
+             (!('isOnline' in data) || data.isOnline is bool) &&
+             (!('lastSeen' in data) || data.lastSeen is timestamp) &&
              data.createdAt is timestamp;
     }
 
-    function isValidMessage(data) {
-      return data.keys().hasAll(['senderId', 'receiverId', 'text', 'timestamp']) &&
-             data.senderId == request.auth.uid &&
-             data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+    function isValidNotification(data) {
+      return data.keys().hasAll(['userId', 'type', 'fromUserId', 'text', 'read', 'timestamp']) &&
+             data.userId is string &&
+             data.type in ['match', 'message', 'like'] &&
+             data.fromUserId == request.auth.uid &&
+             data.text is string && data.text.size() <= 200 &&
+             data.read is bool &&
              data.timestamp is timestamp;
     }
 
@@ -108,6 +113,14 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidMessage(request.resource.data) && (
         chatId.split('_').hasAny([request.auth.uid])
       );
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isOwner(resource.data.userId);
+      allow create: if isAuthenticated() && isValidNotification(request.resource.data);
+      allow update: if isOwner(resource.data.userId) && 
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isOwner(resource.data.userId);
     }
   }
 }
