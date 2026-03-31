@@ -26,7 +26,8 @@ import {
   Bell,
   Eye,
   EyeOff,
-  Image as ImageIcon
+  Image as ImageIcon,
+  ChevronLeft
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { User as UserType, MOCK_PROFILES } from './types';
@@ -66,7 +67,8 @@ import {
   limit,
   serverTimestamp,
   addDoc,
-  getDocFromServer
+  getDocFromServer,
+  updateDoc
 } from 'firebase/firestore';
 
 // --- Error Handling ---
@@ -590,11 +592,12 @@ const Hero = () => {
   );
 };
 
-const ProfileCard = ({ user, onLike, onPass }: { user: UserType, onLike: () => void | Promise<void>, onPass: () => void, key?: string }) => {
+const ProfileCard = ({ user, onLike, onPass, onClick }: { user: UserType, onLike: () => void | Promise<void>, onPass: () => void, onClick?: () => void, key?: string }) => {
   return (
     <motion.div
       whileHover={{ y: -10 }}
-      className="relative group rounded-3xl overflow-hidden shadow-2xl transition-all duration-500 bg-white"
+      className="relative group rounded-3xl overflow-hidden shadow-2xl transition-all duration-500 bg-white cursor-pointer"
+      onClick={onClick}
     >
       <div className="aspect-[3/4] overflow-hidden relative">
         <img 
@@ -631,18 +634,120 @@ const ProfileCard = ({ user, onLike, onPass }: { user: UserType, onLike: () => v
 
       <div className="p-6 flex justify-between items-center bg-inherit">
         <button 
-          onClick={onPass}
+          onClick={(e) => { e.stopPropagation(); onPass(); }}
           className="w-14 h-14 rounded-full flex items-center justify-center border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
         >
           <X size={28} />
         </button>
         <button 
-          onClick={onLike}
+          onClick={(e) => { e.stopPropagation(); onLike(); }}
           className="w-14 h-14 rounded-full flex items-center justify-center bg-gradient-to-r from-primary to-secondary text-white shadow-lg shadow-primary/30 hover:scale-110 transition-all active:scale-90"
         >
           <Heart size={28} className="fill-current" />
         </button>
       </div>
+    </motion.div>
+  );
+};
+
+const ProfileDetailModal = ({ user, onClose, onLike, onPass }: { user: UserType, onClose: () => void, onLike: () => void, onPass: () => void }) => {
+  const [activeImage, setActiveImage] = useState(0);
+  
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 20 }}
+        className="bg-white rounded-[40px] shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col md:flex-row"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Image Section */}
+        <div className="md:w-1/2 relative bg-slate-100 aspect-[3/4] md:aspect-auto">
+          <img 
+            src={user.images?.[activeImage] || `https://picsum.photos/seed/${user.id}/600/800`} 
+            className="w-full h-full object-cover"
+            alt={user.name}
+            referrerPolicy="no-referrer"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+          
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
+            {user.images?.map((_, i) => (
+              <button 
+                key={i} 
+                onClick={() => setActiveImage(i)}
+                className={cn("w-2 h-2 rounded-full transition-all", activeImage === i ? "bg-white w-4" : "bg-white/40")}
+              />
+            ))}
+          </div>
+
+          <button 
+            onClick={onClose}
+            className="absolute top-4 left-4 p-2 bg-black/20 backdrop-blur-md text-white rounded-full hover:bg-black/40 transition-all"
+          >
+            <ChevronLeft size={24} />
+          </button>
+        </div>
+
+        {/* Info Section */}
+        <div className="md:w-1/2 p-8 flex flex-col h-full overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-3xl font-bold">{user.name}, {user.age}</h2>
+              <p className="text-slate-500 flex items-center gap-1 text-sm">
+                <Search size={14} /> {user.location}
+              </p>
+            </div>
+            {user.isVerified && <ShieldCheck className="text-accent" size={24} />}
+          </div>
+
+          <div className="space-y-6 flex-1">
+            <div>
+              <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">About Me</h4>
+              <p className="text-slate-600 text-sm leading-relaxed">{user.bio || "No bio provided yet."}</p>
+            </div>
+
+            <div>
+              <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Interests</h4>
+              <div className="flex flex-wrap gap-2">
+                {user.interests.map(interest => (
+                  <span key={interest} className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold uppercase tracking-wider">
+                    {interest}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Looking For</h4>
+              <p className="text-slate-600 text-sm">{user.lookingFor || "Not specified"}</p>
+            </div>
+          </div>
+
+          <div className="flex gap-4 mt-8 pt-6 border-t">
+            <button 
+              onClick={onPass}
+              className="flex-1 h-14 rounded-2xl flex items-center justify-center border-2 border-slate-100 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
+            >
+              <X size={24} />
+            </button>
+            <button 
+              onClick={onLike}
+              className="flex-[2] h-14 rounded-2xl flex items-center justify-center bg-gradient-to-r from-primary to-secondary text-white shadow-lg shadow-primary/20 hover:scale-105 transition-all"
+            >
+              <Heart size={24} className="fill-current mr-2" />
+              <span className="font-bold">Like Profile</span>
+            </button>
+          </div>
+        </div>
+      </motion.div>
     </motion.div>
   );
 };
@@ -758,8 +863,23 @@ const Chat = () => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
   const [matches, setMatches] = useState<any[]>([]);
-  const [selectedMatch, setSelectedMatch] = useState<any>(null);
+  const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const { user } = useAuth();
+
+  const selectedMatch = matches.find(m => m.id === selectedMatchId);
+
+  useEffect(() => {
+    if (!user || !selectedMatchId) return;
+
+    const matchDoc = doc(db, 'matches', selectedMatchId);
+    const timeout = setTimeout(() => {
+      updateDoc(matchDoc, {
+        [`typing.${user.uid}`]: message.length > 0
+      }).catch(() => {});
+    }, 500);
+
+    return () => clearTimeout(timeout);
+  }, [message, user, selectedMatchId]);
 
   useEffect(() => {
     if (!user) return;
@@ -782,8 +902,8 @@ const Chat = () => {
         };
       }));
       setMatches(matchesData);
-      if (matchesData.length > 0 && !selectedMatch) {
-        setSelectedMatch(matchesData[0]);
+      if (matchesData.length > 0 && !selectedMatchId) {
+        setSelectedMatchId(matchesData[0].id);
       }
     });
 
@@ -791,9 +911,12 @@ const Chat = () => {
   }, [user]);
 
   useEffect(() => {
-    if (!selectedMatch || !user) return;
+    if (!selectedMatchId || !user) return;
 
-    const chatId = [user.uid, selectedMatch.otherUser.id].sort().join('_');
+    const otherUserId = matches.find(m => m.id === selectedMatchId)?.otherUser.id;
+    if (!otherUserId) return;
+
+    const chatId = [user.uid, otherUserId].sort().join('_');
     const q = query(
       collection(db, 'chats', chatId, 'messages'),
       orderBy('timestamp', 'asc'),
@@ -805,7 +928,7 @@ const Chat = () => {
     });
 
     return () => unsubscribe();
-  }, [selectedMatch, user]);
+  }, [selectedMatchId, user, matches]);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -842,10 +965,10 @@ const Chat = () => {
           {matches.map((match) => (
             <button 
               key={match.id} 
-              onClick={() => setSelectedMatch(match)}
+              onClick={() => setSelectedMatchId(match.id)}
               className={cn(
                 "w-full p-4 flex items-center gap-4 hover:bg-primary/5 transition-colors border-b border-inherit",
-                selectedMatch?.id === match.id && "bg-primary/5 border-l-4 border-l-primary"
+                selectedMatchId === match.id && "bg-primary/5 border-l-4 border-l-primary"
               )}
             >
               <img src={match.otherUser.images?.[0] || `https://picsum.photos/seed/${match.otherUser.id}/200/200`} alt={match.otherUser.name} className="w-12 h-12 rounded-full object-cover" referrerPolicy="no-referrer" />
@@ -874,7 +997,16 @@ const Chat = () => {
                 <img src={selectedMatch.otherUser.images?.[0] || `https://picsum.photos/seed/${selectedMatch.otherUser.id}/200/200`} alt={selectedMatch.otherUser.name} className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
                 <div>
                   <h5 className="font-bold text-sm">{selectedMatch.otherUser.name}</h5>
-                  <p className="text-[10px] text-green-500 font-medium">Online</p>
+                  <div className="flex items-center gap-1.5">
+                    <div className={cn("w-1.5 h-1.5 rounded-full", selectedMatch.otherUser.isOnline ? "bg-green-500" : "bg-slate-300")} />
+                    <p className="text-[10px] text-slate-500 font-medium">
+                      {selectedMatch.typing?.[selectedMatch.otherUser.id] 
+                        ? "typing..." 
+                        : selectedMatch.otherUser.isOnline 
+                          ? "Online" 
+                          : "Offline"}
+                    </p>
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1341,7 +1473,8 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState('home');
   const [showMatch, setShowMatch] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
-  const [profiles, setProfiles] = useState<UserType[]>(MOCK_PROFILES);
+  const [selectedProfile, setSelectedProfile] = useState<UserType | null>(null);
+  const [profiles, setProfiles] = useState<UserType[]>([]);
   const { user, profile, loading, isSigningIn, signInError, signIn } = useAuth();
 
   useEffect(() => {
@@ -1352,24 +1485,27 @@ function AppContent() {
   }, [user, activeTab]);
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), limit(20));
+    const q = query(collection(db, 'users'), limit(50));
     const unsubscribe = onSnapshot(q, (snap) => {
-      const fetched = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserType));
+      const fetched = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as UserType))
+        .filter(p => p.id !== user?.uid); // Filter out own profile
+      
       if (fetched.length > 0) {
         setProfiles(fetched);
+      } else {
+        setProfiles(MOCK_PROFILES.filter(p => p.id !== user?.uid));
       }
     }, (err) => {
-      // Gracefully handle permission errors for background listeners
       if (err.code === 'permission-denied') {
-        console.warn("Permission denied for listing users. Using mock data.");
-        setProfiles(MOCK_PROFILES);
+        setProfiles(MOCK_PROFILES.filter(p => p.id !== user?.uid));
       } else {
         handleFirestoreError(err, OperationType.LIST, 'users');
       }
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (user && !profile && !loading) {
@@ -1384,21 +1520,30 @@ function AppContent() {
       signIn();
       return;
     }
-    // Randomly show match popup for demo
-    if (Math.random() > 0.5) {
+
+    // Remove from local list
+    setProfiles(prev => prev.filter(p => p.id !== targetUser.id));
+
+    // Randomly show match popup for demo or if it's a real match logic
+    // In a real app, we'd check if the other user already liked us
+    const matchChance = Math.random() > 0.3;
+    if (matchChance) {
       setShowMatch(true);
-      setTimeout(() => setShowMatch(false), 3000);
       
-      // Save match to Firestore
       try {
         await addDoc(collection(db, 'matches'), {
           users: [user.uid, targetUser.id],
-          timestamp: serverTimestamp()
+          timestamp: serverTimestamp(),
+          typing: { [user.uid]: false, [targetUser.id]: false }
         });
       } catch (err) {
         handleFirestoreError(err, OperationType.WRITE, 'matches');
       }
     }
+  };
+
+  const handlePass = (targetUser: UserType) => {
+    setProfiles(prev => prev.filter(p => p.id !== targetUser.id));
   };
 
   return (
@@ -1449,9 +1594,19 @@ function AppContent() {
                     key={profile.id} 
                     user={profile} 
                     onLike={() => handleLike(profile)} 
-                    onPass={() => {}} 
+                    onPass={() => handlePass(profile)}
+                    onClick={() => setSelectedProfile(profile)}
                   />
                 ))}
+                {profiles.length === 0 && (
+                  <div className="col-span-full py-20 text-center">
+                    <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Search className="text-slate-300" size={32} />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-700">No more profiles</h3>
+                    <p className="text-slate-500">Check back later for more people in your area!</p>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -1479,6 +1634,18 @@ function AppContent() {
           )}
         </AnimatePresence>
       </main>
+
+      {/* Profile Detail Modal */}
+      <AnimatePresence>
+        {selectedProfile && (
+          <ProfileDetailModal 
+            user={selectedProfile} 
+            onClose={() => setSelectedProfile(null)} 
+            onLike={() => { handleLike(selectedProfile); setSelectedProfile(null); }}
+            onPass={() => { handlePass(selectedProfile); setSelectedProfile(null); }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Match Popup */}
       <AnimatePresence>

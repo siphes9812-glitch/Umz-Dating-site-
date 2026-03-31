@@ -7,6 +7,7 @@ export interface User {
   bio: string;
   images: string[];
   interests: string[];
+  lookingFor?: string;
   isVerified: boolean;
   isPremium: boolean;
   isOnline?: boolean;
