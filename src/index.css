@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #8B0000;
+  --color-secondary: #FF4D6D;
+  --color-accent: #C9A227;
+  --color-wine: #A4161A;
+  
+  --font-display: "Playfair Display", serif;
+  --font-sans: "Inter", sans-serif;
+
+  --radius-xl: 20px;
+  --radius-lg: 12px;
+}
+
+@layer base {
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap');
+
+  body {
+    @apply font-sans bg-white text-slate-900 transition-colors duration-300 text-sm;
+  }
+
+  .dark body {
+    @apply bg-neutral-950 text-slate-100;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/10 backdrop-blur-md border border-white/20 shadow-xl;
+  }
+  
+  .glass-dark {
+    @apply bg-black/40 backdrop-blur-md border border-white/10 shadow-2xl;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-primary to-secondary text-white px-6 py-2.5 rounded-full font-semibold shadow-lg hover:shadow-primary/50 hover:scale-105 transition-all duration-300 active:scale-95;
+  }
+
+  .btn-gold {
+    @apply bg-gradient-to-r from-accent to-yellow-600 text-white px-6 py-2.5 rounded-full font-semibold shadow-lg hover:shadow-accent/50 hover:scale-105 transition-all duration-300;
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-20px); }
+}
+
+.gradient-text {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-primary via-secondary to-accent;
+}

@@ -1,0 +1,113 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (Auth UID)
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - name: string (required, 1-50 chars)
+    //   - age: number (required, 18-120)
+    //   - location: string (required, 1-100 chars)
+    //   - bio: string (optional, < 500 chars)
+    //   - image: string (optional, valid URL)
+    //   - interests: list (optional, < 20 items)
+    //   - isVerified: bool (admin only update)
+    //   - isPremium: bool (admin only update)
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // Collection: matches
+    // Document ID: {matchId}
+    // Fields:
+    //   - users: list (required, size 2, contains UIDs)
+    //   - timestamp: timestamp (required)
+    //
+    // Collection: chats/{chatId}/messages
+    // Document ID: {messageId}
+    // Fields:
+    //   - senderId: string (required, must match auth.uid)
+    //   - receiverId: string (required)
+    //   - text: string (required, 1-1000 chars)
+    //   - timestamp: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        ((get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') || 
+         (request.auth.token.email == "siphes9812@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'name', 'age', 'location', 'createdAt']) &&
+             data.keys().hasOnly(['uid', 'name', 'age', 'gender', 'lookingFor', 'location', 'bio', 'height', 'education', 'zodiac', 'image', 'interests', 'isVerified', 'isPremium', 'createdAt', 'role']) &&
+             data.uid is string && data.uid == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
+             data.age is number && data.age >= 18 && data.age <= 120 &&
+             (!('gender' in data) || (data.gender is string && data.gender.size() <= 20)) &&
+             (!('lookingFor' in data) || (data.lookingFor is string && data.lookingFor.size() <= 20)) &&
+             data.location is string && data.location.size() > 0 && data.location.size() <= 100 &&
+             (!('bio' in data) || (data.bio is string && data.bio.size() <= 500)) &&
+             (!('height' in data) || (data.height is string && data.height.size() <= 20)) &&
+             (!('education' in data) || (data.education is string && data.education.size() <= 50)) &&
+             (!('zodiac' in data) || (data.zodiac is string && data.zodiac.size() <= 20)) &&
+             (!('image' in data) || (data.image is string && data.image.size() <= 1000)) &&
+             (!('interests' in data) || (data.interests is list && data.interests.size() <= 20)) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['senderId', 'receiverId', 'text', 'timestamp']) &&
+             data.senderId == request.auth.uid &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+             data.timestamp is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      (!('isVerified' in request.resource.data) || request.resource.data.isVerified == false) && 
+                      (!('isPremium' in request.resource.data) || request.resource.data.isPremium == false);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) &&
+                      request.resource.data.uid == resource.data.uid &&
+                      (request.resource.data.createdAt == resource.data.createdAt || request.resource.data.createdAt == request.time) &&
+                      (!('isVerified' in request.resource.data) || request.resource.data.isVerified == resource.data.isVerified || isAdmin()) &&
+                      (!('isPremium' in request.resource.data) || request.resource.data.isPremium == resource.data.isPremium || isAdmin());
+    }
+
+    match /matches/{matchId} {
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.users;
+      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.users;
+      allow delete: if isAuthenticated() && request.auth.uid in resource.data.users;
+    }
+
+    match /chats/{chatId}/messages/{messageId} {
+      allow read: if isAuthenticated() && (
+        chatId.split('_').hasAny([request.auth.uid])
+      );
+      allow create: if isAuthenticated() && isValidMessage(request.resource.data) && (
+        chatId.split('_').hasAny([request.auth.uid])
+      );
+    }
+  }
+}

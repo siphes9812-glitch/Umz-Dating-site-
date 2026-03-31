@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "name": { "type": "string", "description": "Display name" },
+        "age": { "type": "integer", "description": "User age" },
+        "location": { "type": "string", "description": "User location" },
+        "bio": { "type": "string", "description": "User biography" },
+        "image": { "type": "string", "description": "Profile image URL" },
+        "interests": { "type": "array", "items": { "type": "string" }, "description": "List of interests" },
+        "isVerified": { "type": "boolean", "description": "Whether the user is verified" },
+        "isPremium": { "type": "boolean", "description": "Whether the user has premium status" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
+      },
+      "required": ["uid", "name", "age", "location"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Chat message between users",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string", "description": "UID of the sender" },
+        "receiverId": { "type": "string", "description": "UID of the receiver" },
+        "text": { "type": "string", "description": "Message content" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the message was sent" }
+      },
+      "required": ["senderId", "receiverId", "text", "timestamp"]
+    },
+    "Match": {
+      "title": "Match",
+      "description": "A match between two users",
+      "type": "object",
+      "properties": {
+        "users": { "type": "array", "items": { "type": "string" }, "description": "Array of two UIDs" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the match occurred" }
+      },
+      "required": ["users", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Messages within a chat"
+    },
+    "/matches/{matchId}": {
+      "schema": "Match",
+      "description": "Matches between users"
+    }
+  }
+}
