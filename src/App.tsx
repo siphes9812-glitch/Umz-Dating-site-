@@ -122,7 +122,7 @@ const ErrorBoundary = ({ children }: { children: React.ReactNode }) => {
           <AlertCircle className="mx-auto mb-4 text-primary" size={48} />
           <h2 className="text-2xl font-bold mb-2">Something went wrong</h2>
           <p className="text-slate-400 mb-6">
-            {error?.message?.includes('{') 
+            {(error?.message && typeof error.message === 'string' && error.message.includes('{')) 
               ? "A database error occurred. Please try again later." 
               : "An unexpected error occurred."}
           </p>
@@ -164,37 +164,38 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     let statusUnsubscribe: any;
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      setLoading(true);
       setUser(u);
+      
       if (u) {
         const userDoc = doc(db, 'users', u.uid);
         
-        // Update online status only if profile exists
-        const snap = await getDoc(userDoc);
-        if (snap.exists()) {
-          await setDoc(userDoc, { 
-            isOnline: true, 
-            lastSeen: serverTimestamp() 
-          }, { merge: true }).catch(err => {
-            if (!err.message.includes('permissions')) {
-              console.error("Error updating online status", err);
-            }
-          });
-        }
-
+        // Listen for profile changes
         statusUnsubscribe = onSnapshot(userDoc, (snap) => {
           if (snap.exists()) {
-            setProfile({ id: snap.id, ...snap.data() } as UserType);
+            const data = snap.data();
+            setProfile({ id: snap.id, ...data } as UserType);
+            
+            // Update online status if not already online
+            if (!data.isOnline) {
+              setDoc(userDoc, { 
+                isOnline: true, 
+                lastSeen: serverTimestamp() 
+              }, { merge: true }).catch(err => {
+                if (err.code !== 'permission-denied') {
+                  console.error("Error updating online status", err);
+                }
+              });
+            }
           } else {
             setProfile(null);
           }
           setLoading(false);
         }, (err) => {
-          // Ignore permission errors for background listeners when user is new
           if (err.code !== 'permission-denied') {
             handleFirestoreError(err, OperationType.GET, `users/${u.uid}`);
-          } else {
-            setLoading(false);
           }
+          setLoading(false);
         });
       } else {
         setProfile(null);
@@ -202,21 +203,16 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
     });
 
-    // Handle offline status on window close
     const handleVisibilityChange = async () => {
-      if (!auth.currentUser) return;
+      if (!auth.currentUser || !profile) return;
       const userDoc = doc(db, 'users', auth.currentUser.uid);
-      
-      // Check if profile exists before updating status
-      const snap = await getDoc(userDoc);
-      if (!snap.exists()) return;
 
       if (document.visibilityState === 'hidden') {
         await setDoc(userDoc, { 
           isOnline: false, 
           lastSeen: serverTimestamp() 
         }, { merge: true }).catch(err => {
-          if (!err.message.includes('permissions')) {
+          if (err.code !== 'permission-denied') {
             console.error("Error updating offline status", err);
           }
         });
@@ -225,7 +221,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           isOnline: true, 
           lastSeen: serverTimestamp() 
         }, { merge: true }).catch(err => {
-          if (!err.message.includes('permissions')) {
+          if (err.code !== 'permission-denied') {
             console.error("Error updating online status", err);
           }
         });
@@ -1378,6 +1374,8 @@ function AppContent() {
   useEffect(() => {
     if (user && !profile && !loading) {
       setShowSignup(true);
+    } else if (profile) {
+      setShowSignup(false);
     }
   }, [user, profile, loading]);
 
