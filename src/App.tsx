@@ -68,7 +68,8 @@ import {
   serverTimestamp,
   addDoc,
   getDocFromServer,
-  updateDoc
+  updateDoc,
+  deleteDoc
 } from 'firebase/firestore';
 
 // --- Error Handling ---
@@ -318,6 +319,135 @@ const useAuth = () => {
   return context;
 };
 
+// --- Admin Dashboard ---
+
+const AdminDashboard = () => {
+  const [users, setUsers] = useState<UserType[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setUsers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserType)));
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const toggleBan = async (userId: string, currentStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        isBanned: !currentStatus
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+    }
+  };
+
+  const deleteUser = async (userId: string) => {
+    if (!window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) return;
+    try {
+      await deleteDoc(doc(db, 'users', userId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `users/${userId}`);
+    }
+  };
+
+  if (loading) return <div className="pt-32 text-center">Loading Admin Panel...</div>;
+
+  return (
+    <div className="pt-24 pb-12 px-6 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h2 className="text-3xl font-bold mb-1">Admin Control Panel</h2>
+          <p className="text-slate-500">Manage users, monitor activity, and maintain community safety.</p>
+        </div>
+        <div className="flex gap-4">
+          <div className="bg-white p-4 rounded-2xl border border-black/5 shadow-sm flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+              <UserIcon size={20} />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-slate-400 uppercase">Total Users</div>
+              <div className="text-xl font-bold">{users.length}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-[32px] border border-black/5 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100">
+                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">User</th>
+                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
+                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Role</th>
+                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Joined</th>
+                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                  <td className="p-5">
+                    <div className="flex items-center gap-3">
+                      <img src={u.images?.[0] || `https://picsum.photos/seed/${u.id}/100/100`} className="w-10 h-10 rounded-full object-cover" alt="" />
+                      <div>
+                        <div className="font-bold text-sm">{u.name}, {u.age}</div>
+                        <div className="text-xs text-slate-400">{u.location}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-5">
+                    {u.isBanned ? (
+                      <span className="px-2.5 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-bold uppercase">Banned</span>
+                    ) : (
+                      <span className="px-2.5 py-1 rounded-full bg-green-100 text-green-600 text-[10px] font-bold uppercase">Active</span>
+                    )}
+                  </td>
+                  <td className="p-5">
+                    <span className={cn(
+                      "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase",
+                      u.role === 'admin' ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-600"
+                    )}>
+                      {u.role || 'user'}
+                    </span>
+                  </td>
+                  <td className="p-5 text-xs text-slate-500">
+                    {u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                  </td>
+                  <td className="p-5 text-right">
+                    <div className="flex justify-end gap-2">
+                      <button 
+                        onClick={() => toggleBan(u.id, !!u.isBanned)}
+                        className={cn(
+                          "p-2 rounded-lg transition-all",
+                          u.isBanned ? "bg-green-50 text-green-600 hover:bg-green-100" : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+                        )}
+                        title={u.isBanned ? "Unban User" : "Ban User"}
+                      >
+                        <ShieldCheck size={18} />
+                      </button>
+                      <button 
+                        onClick={() => deleteUser(u.id)}
+                        className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
+                        title="Delete User"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Components ---
 
 const Navbar = ({ activeTab, setActiveTab }: any) => {
@@ -335,7 +465,13 @@ const Navbar = ({ activeTab, setActiveTab }: any) => {
     <nav className="fixed top-0 left-0 right-0 z-50 transition-all duration-300 backdrop-blur-md border-b bg-white/60 border-black/5">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab('discover')}>
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => {
+            if (profile?.role === 'admin') {
+              setActiveTab('admin');
+            } else {
+              setActiveTab('discover');
+            }
+          }}>
             <div className="w-8 h-8 bg-gradient-to-br from-primary to-secondary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
               <Heart className="text-white fill-current" size={20} />
             </div>
@@ -638,6 +774,12 @@ const ProfileCard = ({ user, onLike, onPass, onClick }: { user: UserType, onLike
           className="w-14 h-14 rounded-full flex items-center justify-center border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
         >
           <X size={28} />
+        </button>
+        <button 
+          onClick={(e) => { e.stopPropagation(); onClick?.(); }}
+          className="w-14 h-14 rounded-full flex items-center justify-center border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
+        >
+          <MessageCircle size={28} />
         </button>
         <button 
           onClick={(e) => { e.stopPropagation(); onLike(); }}
@@ -1457,6 +1599,263 @@ const SignupModal = ({ isOpen, onClose }: any) => {
   );
 };
 
+// --- Profile View ---
+
+const ProfileView = () => {
+  const { profile, logout } = useAuth();
+  const [isEditing, setIsEditing] = useState(false);
+
+  if (!profile) return null;
+
+  return (
+    <div className="pt-24 pb-12 px-4 max-w-4xl mx-auto">
+      <div className="bg-white rounded-[40px] shadow-xl overflow-hidden border border-black/5">
+        <div className="relative h-64 bg-gradient-to-r from-primary via-secondary to-accent">
+          <div className="absolute -bottom-16 left-8">
+            <img 
+              src={profile.images?.[0] || `https://ui-avatars.com/api/?name=${profile.name}`} 
+              className="w-32 h-32 rounded-3xl border-4 border-white object-cover shadow-xl"
+              alt={profile.name}
+            />
+          </div>
+          <button 
+            onClick={() => setIsEditing(true)}
+            className="absolute bottom-4 right-8 px-6 py-2.5 bg-white/20 backdrop-blur-md text-white rounded-xl font-bold hover:bg-white/30 transition-all flex items-center gap-2"
+          >
+            <Settings size={18} />
+            Edit Profile
+          </button>
+        </div>
+
+        <div className="pt-20 px-8 pb-8">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-3xl font-bold">{profile.name}, {profile.age}</h2>
+              <p className="text-slate-500 flex items-center gap-1">
+                <Search size={14} /> {profile.location}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {profile.isVerified && (
+                <div className="p-2 bg-accent/10 text-accent rounded-xl" title="Verified Account">
+                  <ShieldCheck size={20} />
+                </div>
+              )}
+              {profile.isPremium && (
+                <div className="p-2 bg-amber-100 text-amber-600 rounded-xl" title="Premium Member">
+                  <Crown size={20} />
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="md:col-span-2 space-y-8">
+              <div>
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Bio</h4>
+                <p className="text-slate-600 leading-relaxed">{profile.bio || "No bio yet. Add one to stand out!"}</p>
+              </div>
+
+              <div>
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Interests</h4>
+                <div className="flex flex-wrap gap-2">
+                  {profile.interests?.map(interest => (
+                    <span key={interest} className="px-4 py-1.5 rounded-xl bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100">
+                      {interest}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Looking For</h4>
+                <div className="p-4 rounded-2xl bg-primary/5 border border-primary/10 text-primary font-bold text-sm">
+                  {profile.lookingFor || "Not specified"}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="p-6 rounded-3xl bg-slate-50 border border-slate-100">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">Details</h4>
+                <div className="space-y-4">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Gender</span>
+                    <span className="font-bold capitalize">{profile.gender}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Height</span>
+                    <span className="font-bold">{profile.height || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Education</span>
+                    <span className="font-bold">{profile.education || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Zodiac</span>
+                    <span className="font-bold">{profile.zodiac || 'N/A'}</span>
+                  </div>
+                </div>
+              </div>
+
+              <button 
+                onClick={logout}
+                className="w-full py-4 rounded-2xl border-2 border-red-50 text-red-500 font-bold hover:bg-red-50 transition-all flex items-center justify-center gap-2"
+              >
+                <LogOut size={20} />
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {isEditing && (
+          <ProfileEditModal profile={profile} onClose={() => setIsEditing(false)} />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: () => void }) => {
+  const [formData, setFormData] = useState({ ...profile });
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await updateDoc(doc(db, 'users', profile.id), {
+        ...formData,
+        lastSeen: serverTimestamp()
+      });
+      onClose();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${profile.id}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ scale: 0.9, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        className="max-w-2xl w-full bg-white rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        <div className="p-8 border-b flex items-center justify-between">
+          <h3 className="text-2xl font-bold">Edit Profile</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-8 space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Name</label>
+              <input 
+                type="text" 
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Age</label>
+              <input 
+                type="number" 
+                value={formData.age}
+                onChange={(e) => setFormData({ ...formData, age: parseInt(e.target.value) })}
+                className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Location</label>
+              <input 
+                type="text" 
+                value={formData.location}
+                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Looking For</label>
+              <select 
+                value={formData.lookingFor}
+                onChange={(e) => setFormData({ ...formData, lookingFor: e.target.value })}
+                className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+              >
+                <option value="Men">Men</option>
+                <option value="Women">Women</option>
+                <option value="Both">Both</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Bio</label>
+            <textarea 
+              value={formData.bio}
+              onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+              rows={4}
+              className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all resize-none"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Height</label>
+              <input 
+                type="text" 
+                value={formData.height}
+                onChange={(e) => setFormData({ ...formData, height: e.target.value })}
+                className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Education</label>
+              <input 
+                type="text" 
+                value={formData.education}
+                onChange={(e) => setFormData({ ...formData, education: e.target.value })}
+                className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Zodiac</label>
+              <input 
+                type="text" 
+                value={formData.zodiac}
+                onChange={(e) => setFormData({ ...formData, zodiac: e.target.value })}
+                className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="p-8 border-t bg-slate-50 flex gap-4">
+          <button onClick={onClose} className="flex-1 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all">Cancel</button>
+          <button 
+            onClick={handleSave}
+            disabled={isSaving}
+            className="flex-[2] btn-primary py-4 font-bold shadow-lg shadow-primary/20"
+          >
+            {isSaving ? 'Saving Changes...' : 'Save Profile'}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -1489,12 +1888,43 @@ function AppContent() {
     const unsubscribe = onSnapshot(q, (snap) => {
       const fetched = snap.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as UserType))
-        .filter(p => p.id !== user?.uid); // Filter out own profile
+        .filter(p => {
+          if (p.id === user?.uid) return false;
+          if (p.isBanned) return false;
+          if (!profile) return true;
+
+          const myGender = profile.gender;
+          const myLookingFor = profile.lookingFor; // 'Men', 'Women', 'Both'
+          const theirGender = p.gender;
+          const theirLookingFor = p.lookingFor;
+
+          const iAmInterested = (myLookingFor === 'Both') || 
+                                (myLookingFor === 'Women' && theirGender === 'female') || 
+                                (myLookingFor === 'Men' && theirGender === 'male');
+          
+          const theyAreInterested = (theirLookingFor === 'Both') || 
+                                    (theirLookingFor === 'Women' && myGender === 'female') || 
+                                    (theirLookingFor === 'Men' && myGender === 'male');
+
+          return iAmInterested && theyAreInterested;
+        });
       
       if (fetched.length > 0) {
         setProfiles(fetched);
       } else {
-        setProfiles(MOCK_PROFILES.filter(p => p.id !== user?.uid));
+        // Fallback to mock profiles but still filter them
+        const filteredMock = MOCK_PROFILES.filter(p => {
+          if (p.id === user?.uid) return false;
+          if (!profile) return true;
+          const myGender = profile.gender;
+          const myLookingFor = profile.lookingFor;
+          const theirGender = p.gender;
+          const iAmInterested = (myLookingFor === 'Both') || 
+                                (myLookingFor === 'Women' && theirGender === 'female') || 
+                                (myLookingFor === 'Men' && theirGender === 'male');
+          return iAmInterested;
+        });
+        setProfiles(filteredMock);
       }
     }, (err) => {
       if (err.code === 'permission-denied') {
@@ -1630,6 +2060,28 @@ function AppContent() {
               exit={{ opacity: 0, y: -20 }}
             >
               <Dashboard />
+            </motion.div>
+          )}
+
+          {activeTab === 'profile' && (
+            <motion.div
+              key="profile"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <ProfileView />
+            </motion.div>
+          )}
+
+          {activeTab === 'admin' && profile?.role === 'admin' && (
+            <motion.div
+              key="admin"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+            >
+              <AdminDashboard />
             </motion.div>
           )}
         </AnimatePresence>
