@@ -168,11 +168,18 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (u) {
         const userDoc = doc(db, 'users', u.uid);
         
-        // Update online status
-        await setDoc(userDoc, { 
-          isOnline: true, 
-          lastSeen: serverTimestamp() 
-        }, { merge: true }).catch(err => console.error("Error updating online status", err));
+        // Update online status only if profile exists
+        const snap = await getDoc(userDoc);
+        if (snap.exists()) {
+          await setDoc(userDoc, { 
+            isOnline: true, 
+            lastSeen: serverTimestamp() 
+          }, { merge: true }).catch(err => {
+            if (!err.message.includes('permissions')) {
+              console.error("Error updating online status", err);
+            }
+          });
+        }
 
         statusUnsubscribe = onSnapshot(userDoc, (snap) => {
           if (snap.exists()) {
@@ -181,7 +188,14 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             setProfile(null);
           }
           setLoading(false);
-        }, (err) => handleFirestoreError(err, OperationType.GET, `users/${u.uid}`));
+        }, (err) => {
+          // Ignore permission errors for background listeners when user is new
+          if (err.code !== 'permission-denied') {
+            handleFirestoreError(err, OperationType.GET, `users/${u.uid}`);
+          } else {
+            setLoading(false);
+          }
+        });
       } else {
         setProfile(null);
         setLoading(false);
@@ -190,18 +204,31 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Handle offline status on window close
     const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'hidden' && auth.currentUser) {
-        const userDoc = doc(db, 'users', auth.currentUser.uid);
+      if (!auth.currentUser) return;
+      const userDoc = doc(db, 'users', auth.currentUser.uid);
+      
+      // Check if profile exists before updating status
+      const snap = await getDoc(userDoc);
+      if (!snap.exists()) return;
+
+      if (document.visibilityState === 'hidden') {
         await setDoc(userDoc, { 
           isOnline: false, 
           lastSeen: serverTimestamp() 
-        }, { merge: true }).catch(err => console.error("Error updating offline status", err));
-      } else if (document.visibilityState === 'visible' && auth.currentUser) {
-        const userDoc = doc(db, 'users', auth.currentUser.uid);
+        }, { merge: true }).catch(err => {
+          if (!err.message.includes('permissions')) {
+            console.error("Error updating offline status", err);
+          }
+        });
+      } else if (document.visibilityState === 'visible') {
         await setDoc(userDoc, { 
           isOnline: true, 
           lastSeen: serverTimestamp() 
-        }, { merge: true }).catch(err => console.error("Error updating online status", err));
+        }, { merge: true }).catch(err => {
+          if (!err.message.includes('permissions')) {
+            console.error("Error updating online status", err);
+          }
+        });
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);

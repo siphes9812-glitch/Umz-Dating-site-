@@ -74,6 +74,14 @@ service cloud.firestore {
              data.createdAt is timestamp;
     }
 
+    function isValidMessage(data) {
+      return data.keys().hasAll(['senderId', 'receiverId', 'text', 'timestamp']) &&
+             data.senderId == request.auth.uid &&
+             data.receiverId is string &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+             data.timestamp is timestamp;
+    }
+
     function isValidNotification(data) {
       return data.keys().hasAll(['userId', 'type', 'fromUserId', 'text', 'read', 'timestamp']) &&
              data.userId is string &&
