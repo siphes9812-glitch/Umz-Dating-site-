@@ -50,35 +50,38 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') || 
-         (request.auth.token.email == "siphes9812@gmail.com" && request.auth.token.email_verified == true));
+        (request.auth.token.email == "siphes9812@gmail.com" || 
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
 
-    function isNotBanned() {
+    function isNotRestricted() {
       return isAuthenticated() && 
         (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) || 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned != true);
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBanned', false) != true &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBlocked', false) != true));
     }
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'name', 'age', 'gender', 'location', 'images', 'createdAt']) &&
-             data.keys().hasOnly(['uid', 'name', 'age', 'gender', 'lookingFor', 'location', 'bio', 'height', 'education', 'zodiac', 'images', 'interests', 'isVerified', 'isPremium', 'isOnline', 'lastSeen', 'createdAt', 'role', 'isBanned']) &&
+             data.keys().hasOnly(['id', 'uid', 'name', 'displayName', 'email', 'age', 'gender', 'lookingFor', 'location', 'bio', 'height', 'education', 'zodiac', 'images', 'interests', 'isVerified', 'isPremium', 'isOnline', 'lastSeen', 'createdAt', 'role', 'isBanned', 'isBlocked']) &&
              data.uid is string &&
-             data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
              data.age is number && data.age >= 18 && data.age <= 120 &&
-             data.gender is string && data.gender in ['male', 'female', 'other'] &&
-             (!('lookingFor' in data) || (data.lookingFor is string && data.lookingFor.size() <= 20)) &&
-             data.location is string && data.location.size() > 0 && data.location.size() <= 100 &&
-             (!('bio' in data) || (data.bio is string && data.bio.size() <= 500)) &&
-             (!('height' in data) || (data.height is string && data.height.size() <= 20)) &&
-             (!('education' in data) || (data.education is string && data.education.size() <= 50)) &&
-             (!('zodiac' in data) || (data.zodiac is string && data.zodiac.size() <= 20)) &&
-             data.images is list && data.images.size() >= 1 && data.images.size() <= 10 &&
-             (!('interests' in data) || (data.interests is list && data.interests.size() <= 20)) &&
+             data.gender is string &&
+             (!('lookingFor' in data) || (data.lookingFor is string && data.lookingFor.size() <= 50)) &&
+             data.location is string && data.location.size() > 0 && data.location.size() <= 200 &&
+             (!('bio' in data) || (data.bio is string && data.bio.size() <= 2000)) &&
+             (!('height' in data) || (data.height is string && data.height.size() <= 50)) &&
+             (!('education' in data) || (data.education is string && data.education.size() <= 100)) &&
+             (!('zodiac' in data) || (data.zodiac is string && data.zodiac.size() <= 50)) &&
+             data.images is list && data.images.size() <= 15 &&
+             (!('interests' in data) || (data.interests is list && data.interests.size() <= 50)) &&
              (!('isOnline' in data) || data.isOnline is bool) &&
              (!('lastSeen' in data) || data.lastSeen is timestamp) &&
              (!('role' in data) || data.role in ['user', 'admin']) &&
              (!('isBanned' in data) || data.isBanned is bool) &&
+             (!('isBlocked' in data) || data.isBlocked is bool) &&
              data.createdAt is timestamp;
     }
 
@@ -86,7 +89,8 @@ service cloud.firestore {
       return data.keys().hasAll(['users', 'timestamp']) &&
              data.users is list && data.users.size() == 2 &&
              request.auth.uid in data.users &&
-             data.timestamp is timestamp;
+             data.timestamp is timestamp &&
+             (!('typing' in data) || data.typing is map);
     }
 
     function isValidMessage(data) {
@@ -120,38 +124,46 @@ service cloud.firestore {
                       (!('isBanned' in request.resource.data) || request.resource.data.isBanned == false) &&
                       (!('isVerified' in request.resource.data) || request.resource.data.isVerified == false) && 
                       (!('isPremium' in request.resource.data) || request.resource.data.isPremium == false);
-      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) &&
-                      (isOwner(userId) ? request.resource.data.uid == request.auth.uid : true) &&
-                      (isOwner(userId) ? (request.resource.data.createdAt == resource.data.createdAt || request.resource.data.createdAt == request.time) : true) &&
-                      (isOwner(userId) ? (!('role' in request.resource.data) || request.resource.data.role == resource.data.role) : true) &&
-                      (isOwner(userId) ? (!('isBanned' in request.resource.data) || request.resource.data.isBanned == resource.data.isBanned) : true) &&
-                      (isOwner(userId) ? (!('isVerified' in request.resource.data) || request.resource.data.isVerified == resource.data.isVerified) : true) &&
-                      (isOwner(userId) ? (!('isPremium' in request.resource.data) || request.resource.data.isPremium == resource.data.isPremium) : true);
+      allow update: if (isOwner(userId) || isAdmin()) && 
+                      (isAdmin() || (isValidUser(request.resource.data) &&
+                       request.resource.data.uid == request.auth.uid &&
+                       (request.resource.data.createdAt == resource.data.createdAt || request.resource.data.createdAt == request.time) &&
+                       (!('role' in request.resource.data) || request.resource.data.role == resource.data.role) &&
+                       (!('isBanned' in request.resource.data) || request.resource.data.isBanned == resource.data.isBanned) &&
+                       (!('isBlocked' in request.resource.data) || request.resource.data.isBlocked == resource.data.isBlocked) &&
+                       (!('isVerified' in request.resource.data) || request.resource.data.isVerified == resource.data.isVerified) &&
+                       (!('isPremium' in request.resource.data) || request.resource.data.isPremium == resource.data.isPremium)));
       allow delete: if isAdmin();
     }
 
     match /matches/{matchId} {
-      allow read: if isNotBanned() && request.auth.uid in resource.data.users;
-      allow create: if isNotBanned() && isValidMatch(request.resource.data);
-      allow update: if isNotBanned() && request.auth.uid in resource.data.users;
-      allow delete: if isNotBanned() && request.auth.uid in resource.data.users;
+      allow read: if isNotRestricted() && request.auth.uid in resource.data.users;
+      allow create: if isNotRestricted() && isValidMatch(request.resource.data);
+      allow update: if isNotRestricted() && request.auth.uid in resource.data.users;
+      allow delete: if isNotRestricted() && request.auth.uid in resource.data.users;
     }
 
     match /chats/{chatId}/messages/{messageId} {
-      allow read: if isNotBanned() && (
+      allow read: if isNotRestricted() && (
         chatId.split('_').hasAny([request.auth.uid])
       );
-      allow create: if isNotBanned() && isValidMessage(request.resource.data) && (
+      allow create: if isNotRestricted() && isValidMessage(request.resource.data) && (
         chatId.split('_').hasAny([request.auth.uid])
       );
+      allow delete: if isNotRestricted() && resource.data.senderId == request.auth.uid;
     }
 
     match /notifications/{notificationId} {
-      allow read: if isNotBanned() && isOwner(resource.data.userId);
-      allow create: if isNotBanned() && isValidNotification(request.resource.data);
-      allow update: if isNotBanned() && isOwner(resource.data.userId) && 
+      allow read: if isNotRestricted() && isOwner(resource.data.userId);
+      allow create: if isNotRestricted() && isValidNotification(request.resource.data);
+      allow update: if isNotRestricted() && isOwner(resource.data.userId) && 
                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
-      allow delete: if isNotBanned() && isOwner(resource.data.userId);
+      allow delete: if isNotRestricted() && isOwner(resource.data.userId);
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
   }
 }

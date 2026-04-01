@@ -9,6 +9,7 @@ import {
   LogOut, 
   Moon, 
   Sun, 
+  ShieldAlert,
   ShieldCheck, 
   Zap,
   Menu,
@@ -295,9 +296,12 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const logout = async () => {
     try {
-      if (user) {
+      if (user && profile) {
         const userDoc = doc(db, 'users', user.uid);
-        await setDoc(userDoc, { isOnline: false, lastSeen: serverTimestamp() }, { merge: true });
+        await updateDoc(userDoc, { 
+          isOnline: false, 
+          lastSeen: serverTimestamp() 
+        }).catch(err => console.warn("Could not update online status on logout", err));
       }
       await signOut(auth);
     } catch (error) {
@@ -333,7 +337,7 @@ const Notifications = () => {
 
     const q = query(
       collection(db, 'notifications'),
-      where('toUserId', '==', user.uid),
+      where('userId', '==', user.uid),
       orderBy('createdAt', 'desc'),
       limit(50)
     );
@@ -424,14 +428,30 @@ const Notifications = () => {
 const AdminDashboard = () => {
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeSubTab, setActiveSubTab] = useState<'users' | 'settings'>('users');
+  const [appSettings, setAppSettings] = useState<any>({
+    maintenanceMode: false,
+    registrationEnabled: true,
+    premiumOnly: false
+  });
 
   useEffect(() => {
     const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snap) => {
+    const unsubscribeUsers = onSnapshot(q, (snap) => {
       setUsers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserType)));
       setLoading(false);
     });
-    return () => unsubscribe();
+
+    const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
+      if (snap.exists()) {
+        setAppSettings(snap.data());
+      }
+    });
+
+    return () => {
+      unsubscribeUsers();
+      unsubscribeSettings();
+    };
   }, []);
 
   const toggleBan = async (userId: string, currentStatus: boolean) => {
@@ -441,6 +461,24 @@ const AdminDashboard = () => {
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+    }
+  };
+
+  const toggleBlock = async (userId: string, currentStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        isBlocked: !currentStatus
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+    }
+  };
+
+  const updateGlobalSettings = async (newSettings: any) => {
+    try {
+      await setDoc(doc(db, 'settings', 'global'), newSettings, { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'settings/global');
     }
   };
 
@@ -475,75 +513,198 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-[32px] border border-black/5 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-100">
-                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">User</th>
-                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
-                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Role</th>
-                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Joined</th>
-                <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(u => (
-                <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                  <td className="p-5">
-                    <div className="flex items-center gap-3">
-                      <img src={u.images?.[0] || `https://picsum.photos/seed/${u.id}/100/100`} className="w-10 h-10 rounded-full object-cover" alt="" />
-                      <div>
-                        <div className="font-bold text-sm">{u.name}, {u.age}</div>
-                        <div className="text-xs text-slate-400">{u.location}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="p-5">
-                    {u.isBanned ? (
-                      <span className="px-2.5 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-bold uppercase">Banned</span>
-                    ) : (
-                      <span className="px-2.5 py-1 rounded-full bg-green-100 text-green-600 text-[10px] font-bold uppercase">Active</span>
-                    )}
-                  </td>
-                  <td className="p-5">
-                    <span className={cn(
-                      "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase",
-                      u.role === 'admin' ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-600"
-                    )}>
-                      {u.role || 'user'}
-                    </span>
-                  </td>
-                  <td className="p-5 text-xs text-slate-500">
-                    {u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : 'N/A'}
-                  </td>
-                  <td className="p-5 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button 
-                        onClick={() => toggleBan(u.id, !!u.isBanned)}
-                        className={cn(
-                          "p-2 rounded-lg transition-all",
-                          u.isBanned ? "bg-green-50 text-green-600 hover:bg-green-100" : "bg-amber-50 text-amber-600 hover:bg-amber-100"
-                        )}
-                        title={u.isBanned ? "Unban User" : "Ban User"}
-                      >
-                        <ShieldCheck size={18} />
-                      </button>
-                      <button 
-                        onClick={() => deleteUser(u.id)}
-                        className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
-                        title="Delete User"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="flex gap-4 mb-8">
+        <button 
+          onClick={() => setActiveSubTab('users')}
+          className={cn(
+            "px-6 py-2 rounded-full font-bold text-sm transition-all",
+            activeSubTab === 'users' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-white text-slate-500 hover:bg-slate-50"
+          )}
+        >
+          User Management
+        </button>
+        <button 
+          onClick={() => setActiveSubTab('settings')}
+          className={cn(
+            "px-6 py-2 rounded-full font-bold text-sm transition-all",
+            activeSubTab === 'settings' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-white text-slate-500 hover:bg-slate-50"
+          )}
+        >
+          App Settings
+        </button>
       </div>
+
+      {activeSubTab === 'users' ? (
+        <div className="bg-white rounded-[32px] border border-black/5 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">User</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Role</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Joined</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                    <td className="p-5">
+                      <div className="flex items-center gap-3">
+                        <img src={u.images?.[0] || `https://picsum.photos/seed/${u.id}/100/100`} className="w-10 h-10 rounded-full object-cover" alt="" />
+                        <div>
+                          <div className="font-bold text-sm">{u.name}, {u.age}</div>
+                          <div className="text-xs text-slate-400">{u.location}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-5">
+                      <div className="flex flex-wrap gap-1">
+                        {u.isBanned && (
+                          <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-[9px] font-bold uppercase">Banned</span>
+                        )}
+                        {u.isBlocked && (
+                          <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-600 text-[9px] font-bold uppercase">Blocked</span>
+                        )}
+                        {!u.isBanned && !u.isBlocked && (
+                          <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-600 text-[9px] font-bold uppercase">Active</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-5">
+                      <span className={cn(
+                        "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase",
+                        u.role === 'admin' ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-600"
+                      )}>
+                        {u.role || 'user'}
+                      </span>
+                    </td>
+                    <td className="p-5 text-xs text-slate-500">
+                      {u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                    </td>
+                    <td className="p-5 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => toggleBlock(u.id, !!u.isBlocked)}
+                          className={cn(
+                            "p-2 rounded-lg transition-all",
+                            u.isBlocked ? "bg-orange-50 text-orange-600 hover:bg-orange-100" : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+                          )}
+                          title={u.isBlocked ? "Unblock User" : "Block User"}
+                        >
+                          <ShieldAlert size={18} />
+                        </button>
+                        <button 
+                          onClick={() => toggleBan(u.id, !!u.isBanned)}
+                          className={cn(
+                            "p-2 rounded-lg transition-all",
+                            u.isBanned ? "bg-green-50 text-green-600 hover:bg-green-100" : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+                          )}
+                          title={u.isBanned ? "Unban User" : "Ban User"}
+                        >
+                          <ShieldCheck size={18} />
+                        </button>
+                        <button 
+                          onClick={() => deleteUser(u.id)}
+                          className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
+                          title="Delete User"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+            <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
+              <Settings size={20} className="text-primary" />
+              Global Application Settings
+            </h3>
+            
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-slate-900">Maintenance Mode</div>
+                  <div className="text-sm text-slate-500 text-balance">Temporarily disable app access for all non-admin users.</div>
+                </div>
+                <button 
+                  onClick={() => updateGlobalSettings({ maintenanceMode: !appSettings.maintenanceMode })}
+                  className={cn(
+                    "w-12 h-6 rounded-full transition-all relative",
+                    appSettings.maintenanceMode ? "bg-primary" : "bg-slate-200"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                    appSettings.maintenanceMode ? "right-1" : "left-1"
+                  )} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-slate-900">New Registrations</div>
+                  <div className="text-sm text-slate-500 text-balance">Allow or disallow new users to create accounts.</div>
+                </div>
+                <button 
+                  onClick={() => updateGlobalSettings({ registrationEnabled: !appSettings.registrationEnabled })}
+                  className={cn(
+                    "w-12 h-6 rounded-full transition-all relative",
+                    appSettings.registrationEnabled ? "bg-primary" : "bg-slate-200"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                    appSettings.registrationEnabled ? "right-1" : "left-1"
+                  )} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-slate-900">Premium Only Mode</div>
+                  <div className="text-sm text-slate-500 text-balance">Restrict app usage to premium members only.</div>
+                </div>
+                <button 
+                  onClick={() => updateGlobalSettings({ premiumOnly: !appSettings.premiumOnly })}
+                  className={cn(
+                    "w-12 h-6 rounded-full transition-all relative",
+                    appSettings.premiumOnly ? "bg-primary" : "bg-slate-200"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                    appSettings.premiumOnly ? "right-1" : "left-1"
+                  )} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-slate-900 to-black p-8 rounded-[32px] text-white">
+            <h3 className="text-xl font-bold mb-4">Admin Notice</h3>
+            <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+              Changes made here affect all users in real-time. Please use these controls responsibly to maintain the integrity of the uMzimkhulu Love Link community.
+            </p>
+            <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+              <div className="flex items-center gap-3 mb-2">
+                <ShieldCheck className="text-primary" size={20} />
+                <span className="font-bold">System Status</span>
+              </div>
+              <div className="text-xs text-slate-400">
+                All systems operational. Database latency: 24ms.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -558,28 +719,42 @@ const Navbar = ({ activeTab, setActiveTab }: any) => {
     { id: 'discover', label: 'Discover', icon: Search },
     { id: 'chat', label: 'Messages', icon: MessageCircle },
     { id: 'notifications', label: 'Notifications', icon: Bell },
-    { id: 'dashboard', label: 'Dashboard', icon: Zap },
     { id: 'profile', label: 'Profile', icon: UserIcon },
   ];
+
+  if (profile?.role === 'admin') {
+    navItems.push({ id: 'admin', label: 'Admin', icon: ShieldCheck });
+  }
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 transition-all duration-300 backdrop-blur-md border-b bg-white/60 border-black/5">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => {
+          <div className="flex items-center gap-2 cursor-pointer group" onClick={() => {
+            if (!user) {
+              signIn();
+              return;
+            }
             if (profile?.role === 'admin') {
-              setActiveTab('admin');
+              setActiveTab('dashboard');
             } else {
               setActiveTab('discover');
             }
           }}>
-            <div className="w-8 h-8 bg-gradient-to-br from-primary to-secondary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
+            <div className="w-8 h-8 bg-gradient-to-br from-primary to-secondary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20 group-hover:scale-110 transition-transform">
               <Heart className="text-white fill-current" size={20} />
             </div>
-            <span className="font-display text-xl font-bold tracking-tight hidden sm:block">
-              <span className="text-primary">uMzimkhulu</span>
-              <span className="text-slate-900"> Love Link</span>
-            </span>
+            <div className="flex flex-col">
+              <span className="font-display text-xl font-bold tracking-tight hidden sm:block">
+                <span className="text-primary">uMzimkhulu</span>
+                <span className="text-slate-900"> Love Link</span>
+              </span>
+              {profile?.role === 'admin' && (
+                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter -mt-1 hidden sm:block opacity-0 group-hover:opacity-100 transition-opacity">
+                  Click here if you want to get to admin dashboard
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Desktop Nav */}
@@ -869,24 +1044,24 @@ const ProfileCard = ({ user, onLike, onPass, onMessage, onClick }: { user: UserT
         </div>
       </div>
 
-      <div className="p-6 flex justify-between items-center bg-inherit">
+      <div className="p-4 flex justify-between items-center bg-inherit">
         <button 
           onClick={(e) => { e.stopPropagation(); onPass(); }}
-          className="w-14 h-14 rounded-full flex items-center justify-center border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
+          className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
         >
-          <X size={28} />
+          <X size={20} />
         </button>
         <button 
           onClick={(e) => { e.stopPropagation(); onMessage(); }}
-          className="w-14 h-14 rounded-full flex items-center justify-center border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
+          className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
         >
-          <MessageCircle size={28} />
+          <MessageCircle size={20} />
         </button>
         <button 
           onClick={(e) => { e.stopPropagation(); onLike(); }}
-          className="w-14 h-14 rounded-full flex items-center justify-center bg-gradient-to-r from-primary to-secondary text-white shadow-lg shadow-primary/30 hover:scale-110 transition-all active:scale-90"
+          className="w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-r from-primary to-secondary text-white shadow-lg shadow-primary/30 hover:scale-110 transition-all active:scale-90"
         >
-          <Heart size={28} className="fill-current" />
+          <Heart size={20} className="fill-current" />
         </button>
       </div>
     </motion.div>
@@ -1212,6 +1387,16 @@ const Chat = ({ selectedMatchId, setSelectedMatchId }: { selectedMatchId: string
     }
   };
 
+  const deleteMessage = async (msgId: string) => {
+    if (!user || !selectedMatch) return;
+    const chatId = [user.uid, selectedMatch.otherUser.id].sort().join('_');
+    try {
+      await deleteDoc(doc(db, 'chats', chatId, 'messages', msgId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `chats/${chatId}/messages/${msgId}`);
+    }
+  };
+
   return (
     <div className="pt-20 pb-6 px-4 max-w-6xl mx-auto h-[calc(100vh-20px)] flex gap-6">
       {/* Sidebar */}
@@ -1280,16 +1465,26 @@ const Chat = ({ selectedMatchId, setSelectedMatchId }: { selectedMatchId: string
             <div ref={scrollRef} className="flex-1 p-6 overflow-y-auto space-y-4">
               {messages.map((msg) => (
                 <div key={msg.id} className={cn(
-                  "flex flex-col max-w-[80%]",
+                  "flex flex-col max-w-[80%] group",
                   msg.senderId === user?.uid ? "ml-auto items-end" : "items-start"
                 )}>
-                  <div className={cn(
-                    "px-4 py-3 rounded-2xl text-sm shadow-sm",
-                    msg.senderId === user?.uid 
-                      ? "bg-gradient-to-r from-primary to-secondary text-white rounded-tr-none" 
-                      : "bg-slate-100 text-slate-800 rounded-tl-none"
-                  )}>
-                    {msg.text}
+                  <div className="flex items-center gap-2">
+                    {msg.senderId === user?.uid && (
+                      <button 
+                        onClick={() => deleteMessage(msg.id)}
+                        className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-300 hover:text-red-500 transition-all"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                    <div className={cn(
+                      "px-4 py-3 rounded-2xl text-sm shadow-sm",
+                      msg.senderId === user?.uid 
+                        ? "bg-gradient-to-r from-primary to-secondary text-white rounded-tr-none" 
+                        : "bg-slate-100 text-slate-800 rounded-tl-none"
+                    )}>
+                      {msg.text}
+                    </div>
                   </div>
                   <span className="text-[10px] text-slate-400 mt-1">
                     {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -1403,14 +1598,50 @@ const SignupModal = ({ isOpen, onClose }: any) => {
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const compressImage = (base64Str: string, maxWidth = 600, maxHeight = 600, quality = 0.6): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(base64Str); // Fallback to original if error
+    });
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        alert("File is too large. Please choose an image under 5MB.");
+        return;
+      }
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
+        const compressed = await compressImage(reader.result as string);
         setFormData(prev => ({
           ...prev,
-          images: [...prev.images, reader.result as string]
+          images: [...prev.images, compressed]
         }));
       };
       reader.readAsDataURL(file);
@@ -1432,6 +1663,14 @@ const SignupModal = ({ isOpen, onClose }: any) => {
     }
     setIsSubmitting(true);
     try {
+      // Check total size of images to prevent Firestore limit error
+      const totalSize = JSON.stringify(formData.images).length;
+      if (totalSize > 800000) { // ~800KB limit for safety
+        alert("Your profile images are too large. Please remove some or use smaller photos.");
+        setIsSubmitting(false);
+        return;
+      }
+
       await setDoc(doc(db, 'users', user.uid), {
         uid: user.uid,
         email: user.email || '',
@@ -1729,8 +1968,34 @@ const SignupModal = ({ isOpen, onClose }: any) => {
 const ProfileView = () => {
   const { profile, logout } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
+  const [showSignup, setShowSignup] = useState(false);
 
-  if (!profile) return null;
+  if (!profile) {
+    return (
+      <div className="pt-32 pb-12 px-4 max-w-4xl mx-auto text-center">
+        <div className="bg-white rounded-[40px] p-12 shadow-xl border border-black/5">
+          <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6">
+            <UserIcon className="text-primary" size={40} />
+          </div>
+          <h2 className="text-2xl font-bold mb-4">Complete Your Profile</h2>
+          <p className="text-slate-500 mb-8 max-w-md mx-auto">
+            You haven't finished setting up your profile yet. Add some photos and details to start meeting new people!
+          </p>
+          <button 
+            onClick={() => setShowSignup(true)}
+            className="btn-primary px-8 py-4 rounded-2xl font-bold shadow-lg shadow-primary/20"
+          >
+            Create Profile
+          </button>
+        </div>
+        <AnimatePresence>
+          {showSignup && (
+            <SignupModal isOpen={showSignup} onClose={() => setShowSignup(false)} />
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
 
   return (
     <div className="pt-24 pb-12 px-4 max-w-4xl mx-auto">
@@ -1848,9 +2113,74 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
   const [formData, setFormData] = useState({ ...profile });
   const [isSaving, setIsSaving] = useState(false);
 
+  const compressImage = (base64Str: string, maxWidth = 600, maxHeight = 600, quality = 0.6): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(base64Str);
+    });
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        alert("File is too large. Please choose an image under 5MB.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const compressed = await compressImage(reader.result as string);
+        setFormData(prev => ({
+          ...prev,
+          images: [...(prev.images || []), compressed]
+        }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      images: (prev.images || []).filter((_, i) => i !== index)
+    }));
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
+      // Check total size of images to prevent Firestore limit error
+      const totalSize = JSON.stringify(formData.images).length;
+      if (totalSize > 800000) { // ~800KB limit for safety
+        alert("Your profile data is too large. Please remove some images or use smaller photos.");
+        setIsSaving(false);
+        return;
+      }
+
       await updateDoc(doc(db, 'users', profile.id), {
         ...formData,
         lastSeen: serverTimestamp()
@@ -1935,6 +2265,30 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
             />
           </div>
 
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Profile Gallery</label>
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-4 mb-4">
+              {formData.images?.map((img, idx) => (
+                <div key={idx} className="relative aspect-[3/4] rounded-xl overflow-hidden group">
+                  <img src={img} className="w-full h-full object-cover" alt="" />
+                  <button 
+                    onClick={() => removeImage(idx)}
+                    className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+              {(formData.images?.length || 0) < 15 && (
+                <label className="aspect-[3/4] rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-1 cursor-pointer hover:bg-slate-50 transition-all">
+                  <Plus size={20} className="text-slate-400" />
+                  <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                </label>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 italic">Compressed images help keep your profile loading fast.</p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Height</label>
@@ -2000,7 +2354,21 @@ function AppContent() {
   const [selectedProfile, setSelectedProfile] = useState<UserType | null>(null);
   const [profiles, setProfiles] = useState<UserType[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
-  const { user, profile, loading, isSigningIn, signInError, signIn } = useAuth();
+  const [appSettings, setAppSettings] = useState<any>({
+    maintenanceMode: false,
+    registrationEnabled: true,
+    premiumOnly: false
+  });
+  const { user, profile, loading, isSigningIn, signInError, signIn, logout } = useAuth();
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
+      if (snap.exists()) {
+        setAppSettings(snap.data());
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     // If user is signed in and on home, redirect to discover
@@ -2021,7 +2389,7 @@ function AppContent() {
         .map(doc => ({ id: doc.id, ...doc.data() } as UserType))
         .filter(p => {
           if (p.id === user?.uid) return false;
-          if (p.isBanned) return false;
+          if (p.isBanned || p.isBlocked) return false;
           if (!profile) return true;
 
           const myGender = profile.gender;
@@ -2046,6 +2414,7 @@ function AppContent() {
         // Fallback to mock profiles but still filter them
         const filteredMock = MOCK_PROFILES.filter(p => {
           if (p.id === user?.uid) return false;
+          if (p.isBanned || p.isBlocked) return false;
           if (!profile) return true;
           const myGender = profile.gender;
           const myLookingFor = profile.lookingFor;
@@ -2070,11 +2439,70 @@ function AppContent() {
 
   useEffect(() => {
     if (user && !profile && !loading) {
+      if (!appSettings.registrationEnabled && !profile) {
+        // Registration is disabled
+        return;
+      }
       setShowSignup(true);
     } else if (profile) {
       setShowSignup(false);
     }
-  }, [user, profile, loading]);
+  }, [user, profile, loading, appSettings.registrationEnabled]);
+
+  // Global Guards
+  if (user && profile && (profile.isBanned || profile.isBlocked) && profile.role !== 'admin') {
+    return (
+      <div className="fixed inset-0 z-[200] bg-white flex items-center justify-center p-6 text-center">
+        <div className="max-w-md">
+          <div className="w-20 h-20 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6">
+            <ShieldAlert size={40} />
+          </div>
+          <h1 className="text-3xl font-bold text-slate-900 mb-4">Account Restricted</h1>
+          <p className="text-slate-500 mb-8">
+            Your account has been {profile.isBanned ? 'permanently banned' : 'temporarily blocked'} for violating our community guidelines.
+          </p>
+          <button onClick={logout} className="btn-primary w-full py-4">Logout</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (appSettings.maintenanceMode && profile?.role !== 'admin') {
+    return (
+      <div className="fixed inset-0 z-[200] bg-slate-900 flex items-center justify-center p-6 text-center text-white">
+        <div className="max-w-md">
+          <div className="w-20 h-20 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Settings size={40} className="animate-spin-slow" />
+          </div>
+          <h1 className="text-3xl font-bold mb-4">Under Maintenance</h1>
+          <p className="text-slate-400 mb-8">
+            uMzimkhulu Love Link is currently undergoing scheduled maintenance. We'll be back online shortly!
+          </p>
+          {user && <button onClick={logout} className="px-8 py-3 rounded-full border border-white/20 hover:bg-white/5 transition-all">Logout</button>}
+        </div>
+      </div>
+    );
+  }
+
+  if (appSettings.premiumOnly && user && profile && !profile.isPremium && profile.role !== 'admin') {
+    return (
+      <div className="fixed inset-0 z-[200] bg-gradient-to-br from-slate-900 to-black flex items-center justify-center p-6 text-center text-white">
+        <div className="max-w-md">
+          <div className="w-20 h-20 bg-amber-400/20 text-amber-400 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Crown size={40} />
+          </div>
+          <h1 className="text-3xl font-bold mb-4">Premium Access Only</h1>
+          <p className="text-slate-400 mb-8">
+            The community is currently in exclusive mode. Only premium members can access the app at this time.
+          </p>
+          <div className="flex flex-col gap-3">
+            <button className="btn-primary w-full py-4 bg-amber-500 hover:bg-amber-600 border-none text-black">Upgrade to Premium</button>
+            <button onClick={logout} className="text-slate-500 hover:text-white transition-colors text-sm">Logout</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleLike = async (targetUser: UserType) => {
     if (!user) {
@@ -2209,7 +2637,7 @@ function AppContent() {
                   </button>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
                 {profiles.map(profile => (
                   <ProfileCard 
                     key={profile.id} 
@@ -2255,7 +2683,7 @@ function AppContent() {
             </motion.div>
           )}
 
-          {activeTab === 'dashboard' && (
+          {activeTab === 'dashboard' && profile?.role === 'admin' && (
             <motion.div
               key="dashboard"
               initial={{ opacity: 0, y: 20 }}

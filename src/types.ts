@@ -8,8 +8,9 @@ export interface User {
   images: string[];
   interests: string[];
   lookingFor?: string;
-  role?: 'user' | 'admin';
+  role?: 'admin' | 'user';
   isBanned?: boolean;
+  isBlocked?: boolean;
   isVerified: boolean;
   isPremium: boolean;
   isOnline?: boolean;
