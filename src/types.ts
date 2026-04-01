@@ -4,6 +4,7 @@ export interface User {
   age: number;
   gender: 'male' | 'female' | 'other';
   location: string;
+  education?: string;
   bio: string;
   images: string[];
   interests: string[];
@@ -17,6 +18,10 @@ export interface User {
   lastSeen?: any;
   latitude?: number;
   longitude?: number;
+  preferredAgeMin?: number;
+  preferredAgeMax?: number;
+  preferredDistance?: number;
+  preferredEducation?: string[];
 }
 
 export interface Notification {

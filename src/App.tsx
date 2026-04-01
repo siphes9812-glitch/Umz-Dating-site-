@@ -2045,7 +2045,11 @@ const SignupModal = ({ isOpen, onClose }: any) => {
     hobbies: [] as string[],
     images: [] as string[],
     latitude: null as number | null,
-    longitude: null as number | null
+    longitude: null as number | null,
+    preferredAgeMin: 18,
+    preferredAgeMax: 100,
+    preferredDistance: 50,
+    preferredEducation: [] as string[]
   });
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -2167,6 +2171,10 @@ const SignupModal = ({ isOpen, onClose }: any) => {
         interests: formData.hobbies,
         latitude: formData.latitude,
         longitude: formData.longitude,
+        preferredAgeMin: formData.preferredAgeMin,
+        preferredAgeMax: formData.preferredAgeMax,
+        preferredDistance: formData.preferredDistance,
+        preferredEducation: formData.preferredEducation,
         role: 'user',
         isBanned: false,
         isVerified: false,
@@ -2185,7 +2193,7 @@ const SignupModal = ({ isOpen, onClose }: any) => {
 
   if (!isOpen) return null;
 
-  const totalSteps = 6;
+  const totalSteps = 7;
 
   const isStepValid = () => {
     if (step === 1) return formData.name && formData.age;
@@ -2194,6 +2202,7 @@ const SignupModal = ({ isOpen, onClose }: any) => {
     if (step === 4) return formData.zodiac && formData.bio;
     if (step === 5) return formData.hobbies.length >= 3;
     if (step === 6) return formData.images.length >= 2;
+    if (step === 7) return formData.preferredAgeMin && formData.preferredAgeMax && formData.preferredDistance;
     return true;
   };
 
@@ -2215,7 +2224,7 @@ const SignupModal = ({ isOpen, onClose }: any) => {
 
         <div className="p-8">
           <div className="flex gap-2 mb-8">
-            {[1, 2, 3, 4, 5, 6].map(s => (
+            {[1, 2, 3, 4, 5, 6, 7].map(s => (
               <div key={s} className={cn("h-1.5 flex-1 rounded-full transition-all duration-500", s <= step ? "bg-primary" : "bg-slate-100")} />
             ))}
           </div>
@@ -2467,6 +2476,91 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                 )}
               </motion.div>
             )}
+
+            {step === 7 && (
+              <motion.div
+                key="step7"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+              >
+                <h3 className="text-2xl font-bold mb-2">Matching Preferences</h3>
+                <p className="text-slate-500 text-sm mb-6">Tell us who you're looking for.</p>
+                
+                <div className="space-y-6">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Age Range ({formData.preferredAgeMin} - {formData.preferredAgeMax})</label>
+                    <div className="flex items-center gap-4">
+                      <div className="flex-1">
+                        <span className="text-[9px] text-slate-400 block mb-1">Min Age</span>
+                        <input 
+                          type="range" 
+                          min="18" 
+                          max="100" 
+                          value={formData.preferredAgeMin}
+                          onChange={(e) => setFormData({ ...formData, preferredAgeMin: parseInt(e.target.value) })}
+                          className="w-full accent-primary"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <span className="text-[9px] text-slate-400 block mb-1">Max Age</span>
+                        <input 
+                          type="range" 
+                          min="18" 
+                          max="100" 
+                          value={formData.preferredAgeMax}
+                          onChange={(e) => setFormData({ ...formData, preferredAgeMax: parseInt(e.target.value) })}
+                          className="w-full accent-primary"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Maximum Distance ({formData.preferredDistance} km)</label>
+                    <input 
+                      type="range" 
+                      min="1" 
+                      max="500" 
+                      value={formData.preferredDistance}
+                      onChange={(e) => setFormData({ ...formData, preferredDistance: parseInt(e.target.value) })}
+                      className="w-full accent-primary"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Preferred Education</label>
+                    <div className="flex flex-wrap gap-2">
+                      {["High School", "Bachelor's", "Master's", "PhD", "Other"].map(edu => {
+                        const isSelected = formData.preferredEducation.includes(edu);
+                        return (
+                          <button
+                            key={edu}
+                            type="button"
+                            onClick={() => {
+                              if (isSelected) {
+                                setFormData({ ...formData, preferredEducation: formData.preferredEducation.filter(e => e !== edu) });
+                              } else {
+                                setFormData({ ...formData, preferredEducation: [...formData.preferredEducation, edu] });
+                              }
+                            }}
+                            className={cn(
+                              "px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all border",
+                              isSelected 
+                                ? "bg-primary border-primary text-white" 
+                                : "bg-slate-50 border-slate-100 text-slate-600"
+                            )}
+                          >
+                            {edu}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[9px] text-slate-400 mt-2 italic">* Leave empty to match with any educational background</p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
           </AnimatePresence>
 
           <div className="flex gap-4 mt-10">
@@ -2618,6 +2712,24 @@ const ProfileView = () => {
                   <div className="flex justify-between text-xs">
                     <span className="text-slate-500">Zodiac</span>
                     <span className="font-bold">{profile.zodiac || 'N/A'}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 rounded-3xl bg-primary/5 border border-primary/10">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-primary mb-4">Preferences</h4>
+                <div className="space-y-4">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Age Range</span>
+                    <span className="font-bold">{profile.preferredAgeMin || 18} - {profile.preferredAgeMax || 100}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Max Distance</span>
+                    <span className="font-bold">{profile.preferredDistance || 50} km</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Education</span>
+                    <span className="font-bold">{(profile.preferredEducation || []).length > 0 ? profile.preferredEducation.join(', ') : 'Any'}</span>
                   </div>
                 </div>
               </div>
@@ -2939,6 +3051,83 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
               />
             </div>
           </div>
+
+          <div className="pt-6 border-t space-y-6">
+            <h4 className="text-sm font-bold text-slate-900">Matching Preferences</h4>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Age Range ({formData.preferredAgeMin} - {formData.preferredAgeMax})</label>
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <span className="text-[9px] text-slate-400 block mb-1">Min Age</span>
+                    <input 
+                      type="range" 
+                      min="18" 
+                      max="100" 
+                      value={formData.preferredAgeMin}
+                      onChange={(e) => setFormData({ ...formData, preferredAgeMin: parseInt(e.target.value) })}
+                      className="w-full accent-primary"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-[9px] text-slate-400 block mb-1">Max Age</span>
+                    <input 
+                      type="range" 
+                      min="18" 
+                      max="100" 
+                      value={formData.preferredAgeMax}
+                      onChange={(e) => setFormData({ ...formData, preferredAgeMax: parseInt(e.target.value) })}
+                      className="w-full accent-primary"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Max Distance ({formData.preferredDistance} km)</label>
+                <input 
+                  type="range" 
+                  min="1" 
+                  max="500" 
+                  value={formData.preferredDistance}
+                  onChange={(e) => setFormData({ ...formData, preferredDistance: parseInt(e.target.value) })}
+                  className="w-full accent-primary"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Preferred Education</label>
+              <div className="flex flex-wrap gap-2">
+                {["High School", "Bachelor's", "Master's", "PhD", "Other"].map(edu => {
+                  const isSelected = (formData.preferredEducation || []).includes(edu);
+                  return (
+                    <button
+                      key={edu}
+                      type="button"
+                      onClick={() => {
+                        const currentEdu = formData.preferredEducation || [];
+                        if (isSelected) {
+                          setFormData({ ...formData, preferredEducation: currentEdu.filter(e => e !== edu) });
+                        } else {
+                          setFormData({ ...formData, preferredEducation: [...currentEdu, edu] });
+                        }
+                      }}
+                      className={cn(
+                        "px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all border",
+                        isSelected 
+                          ? "bg-primary border-primary text-white" 
+                          : "bg-slate-50 border-slate-100 text-slate-600"
+                      )}
+                    >
+                      {edu}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="p-8 border-t bg-slate-50 flex gap-4">
@@ -2986,6 +3175,21 @@ function AppContent() {
   const isAdminUser = profile?.role === 'admin' || user?.email === 'siphes9812@gmail.com';
 
   useEffect(() => {
+    if (user?.email === 'siphes9812@gmail.com' && profile) {
+      if (profile.isBanned || profile.isBlocked || profile.role !== 'admin') {
+        const userDoc = doc(db, 'users', user.uid);
+        updateDoc(userDoc, {
+          isBanned: false,
+          isBlocked: false,
+          role: 'admin'
+        }).catch(err => {
+          console.error("Failed to auto-reinstate admin account", err);
+        });
+      }
+    }
+  }, [user, profile]);
+
+  useEffect(() => {
     const unsubscribe = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
       if (snap.exists()) {
         setAppSettings(snap.data());
@@ -3029,7 +3233,34 @@ function AppContent() {
                                     (theirLookingFor === 'Women' && myGender === 'female') || 
                                     (theirLookingFor === 'Men' && myGender === 'male');
 
-          return iAmInterested && theyAreInterested;
+          if (!iAmInterested || !theyAreInterested) return false;
+
+          // Advanced Filtering
+          
+          // 1. Age Preference
+          const minAge = profile.preferredAgeMin || 18;
+          const maxAge = profile.preferredAgeMax || 100;
+          if (p.age < minAge || p.age > maxAge) return false;
+
+          // 2. Distance Preference
+          const maxDist = profile.preferredDistance || 50; // Default 50km
+          if (profile.latitude && profile.longitude && p.latitude && p.longitude) {
+            const dist = calculateDistance(profile.latitude, profile.longitude, p.latitude, p.longitude);
+            if (dist > maxDist) return false;
+          }
+
+          // 3. Education Preference
+          if (profile.preferredEducation && profile.preferredEducation.length > 0) {
+            if (!p.education || !profile.preferredEducation.includes(p.education)) return false;
+          }
+
+          // 4. Interest Matching (at least 1 common interest if user has interests)
+          if (profile.interests && profile.interests.length > 0 && p.interests && p.interests.length > 0) {
+            const commonInterests = profile.interests.filter(interest => p.interests.includes(interest));
+            if (commonInterests.length === 0) return false;
+          }
+
+          return true;
         });
       
       if (fetched.length > 0) {
@@ -3046,7 +3277,7 @@ function AppContent() {
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, profile]);
 
   useEffect(() => {
     if (!user) {
@@ -3084,7 +3315,7 @@ function AppContent() {
   }, [user, profile, loading, appSettings.registrationEnabled]);
 
   // Global Guards
-  if (user && profile && (profile.isBanned || profile.isBlocked) && profile.role !== 'admin') {
+  if (user && profile && (profile.isBanned || profile.isBlocked) && !isAdminUser) {
     return (
       <div className="fixed inset-0 z-[200] bg-white flex items-center justify-center p-6 text-center">
         <div className="max-w-md">
