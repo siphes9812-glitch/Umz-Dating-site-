@@ -50,13 +50,14 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-        ((get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') || 
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') || 
          (request.auth.token.email == "siphes9812@gmail.com" && request.auth.token.email_verified == true));
     }
 
     function isNotBanned() {
       return isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned != true;
+        (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned != true);
     }
 
     function isValidUser(data) {
@@ -72,13 +73,20 @@ service cloud.firestore {
              (!('height' in data) || (data.height is string && data.height.size() <= 20)) &&
              (!('education' in data) || (data.education is string && data.education.size() <= 50)) &&
              (!('zodiac' in data) || (data.zodiac is string && data.zodiac.size() <= 20)) &&
-             data.images is list && data.images.size() >= 2 && data.images.size() <= 10 &&
+             data.images is list && data.images.size() >= 1 && data.images.size() <= 10 &&
              (!('interests' in data) || (data.interests is list && data.interests.size() <= 20)) &&
              (!('isOnline' in data) || data.isOnline is bool) &&
              (!('lastSeen' in data) || data.lastSeen is timestamp) &&
              (!('role' in data) || data.role in ['user', 'admin']) &&
              (!('isBanned' in data) || data.isBanned is bool) &&
              data.createdAt is timestamp;
+    }
+
+    function isValidMatch(data) {
+      return data.keys().hasAll(['users', 'timestamp']) &&
+             data.users is list && data.users.size() == 2 &&
+             request.auth.uid in data.users &&
+             data.timestamp is timestamp;
     }
 
     function isValidMessage(data) {
@@ -90,13 +98,14 @@ service cloud.firestore {
     }
 
     function isValidNotification(data) {
-      return data.keys().hasAll(['userId', 'type', 'fromUserId', 'text', 'read', 'timestamp']) &&
+      return data.keys().hasAll(['userId', 'type', 'fromUserId', 'title', 'message', 'read', 'createdAt']) &&
              data.userId is string &&
              data.type in ['match', 'message', 'like'] &&
              data.fromUserId == request.auth.uid &&
-             data.text is string && data.text.size() <= 200 &&
+             data.title is string && data.title.size() <= 100 &&
+             data.message is string && data.message.size() <= 500 &&
              data.read is bool &&
-             data.timestamp is timestamp;
+             data.createdAt is timestamp;
     }
 
     // ===============================================================
@@ -123,7 +132,8 @@ service cloud.firestore {
 
     match /matches/{matchId} {
       allow read: if isNotBanned() && request.auth.uid in resource.data.users;
-      allow create: if isNotBanned() && request.auth.uid in request.resource.data.users;
+      allow create: if isNotBanned() && isValidMatch(request.resource.data);
+      allow update: if isNotBanned() && request.auth.uid in resource.data.users;
       allow delete: if isNotBanned() && request.auth.uid in resource.data.users;
     }
 

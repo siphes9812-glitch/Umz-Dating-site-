@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Heart, 
@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { User as UserType, MOCK_PROFILES } from './types';
+import { format, formatDistanceToNow } from 'date-fns';
 import { 
   LineChart, 
   Line, 
@@ -60,6 +61,7 @@ import {
   doc, 
   setDoc, 
   getDoc, 
+  getDocs,
   onSnapshot, 
   query, 
   where, 
@@ -321,6 +323,104 @@ const useAuth = () => {
 
 // --- Admin Dashboard ---
 
+const Notifications = () => {
+  const { user } = useAuth();
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, 'notifications'),
+      where('toUserId', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setNotifications(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLoading(false);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'notifications');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const markAsRead = async (id: string) => {
+    try {
+      await updateDoc(doc(db, 'notifications', id), { read: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `notifications/${id}`);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto py-8 px-4">
+      <div className="flex items-center justify-between mb-8">
+        <h2 className="text-2xl font-bold">Notifications</h2>
+        <span className="text-sm text-slate-500">{notifications.filter(n => !n.read).length} unread</span>
+      </div>
+
+      <div className="space-y-4">
+        {notifications.map((notification) => (
+          <motion.div
+            key={notification.id}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={cn(
+              "p-4 rounded-3xl border transition-all cursor-pointer",
+              notification.read ? "bg-white border-slate-100" : "bg-primary/5 border-primary/20 shadow-sm"
+            )}
+            onClick={() => markAsRead(notification.id)}
+          >
+            <div className="flex gap-4">
+              <div className={cn(
+                "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
+                notification.type === 'like' ? "bg-pink-100 text-pink-600" : 
+                notification.type === 'match' ? "bg-purple-100 text-purple-600" : "bg-blue-100 text-blue-600"
+              )}>
+                {notification.type === 'like' ? <Heart size={24} /> : 
+                 notification.type === 'match' ? <Zap size={24} /> : <MessageCircle size={24} />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <h3 className="font-bold text-slate-900 truncate">{notification.title}</h3>
+                  <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                    {notification.createdAt?.toDate ? formatDistanceToNow(notification.createdAt.toDate(), { addSuffix: true }) : 'Just now'}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-600 line-clamp-2">{notification.message}</p>
+              </div>
+              {!notification.read && (
+                <div className="w-2 h-2 bg-primary rounded-full mt-2" />
+              )}
+            </div>
+          </motion.div>
+        ))}
+
+        {notifications.length === 0 && (
+          <div className="text-center py-20 bg-slate-50 rounded-[40px] border-2 border-dashed border-slate-200">
+            <Bell className="mx-auto text-slate-300 mb-4" size={48} />
+            <h3 className="text-lg font-bold text-slate-700">No notifications yet</h3>
+            <p className="text-slate-500">When people like or match with you, you'll see it here!</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const AdminDashboard = () => {
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -457,6 +557,7 @@ const Navbar = ({ activeTab, setActiveTab }: any) => {
   const navItems = [
     { id: 'discover', label: 'Discover', icon: Search },
     { id: 'chat', label: 'Messages', icon: MessageCircle },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'dashboard', label: 'Dashboard', icon: Zap },
     { id: 'profile', label: 'Profile', icon: UserIcon },
   ];
@@ -728,7 +829,7 @@ const Hero = () => {
   );
 };
 
-const ProfileCard = ({ user, onLike, onPass, onClick }: { user: UserType, onLike: () => void | Promise<void>, onPass: () => void, onClick?: () => void, key?: string }) => {
+const ProfileCard = ({ user, onLike, onPass, onMessage, onClick }: { user: UserType, onLike: () => void | Promise<void>, onPass: () => void, onMessage: () => void, onClick?: () => void, key?: string }) => {
   return (
     <motion.div
       whileHover={{ y: -10 }}
@@ -776,7 +877,7 @@ const ProfileCard = ({ user, onLike, onPass, onClick }: { user: UserType, onLike
           <X size={28} />
         </button>
         <button 
-          onClick={(e) => { e.stopPropagation(); onClick?.(); }}
+          onClick={(e) => { e.stopPropagation(); onMessage(); }}
           className="w-14 h-14 rounded-full flex items-center justify-center border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
         >
           <MessageCircle size={28} />
@@ -792,7 +893,7 @@ const ProfileCard = ({ user, onLike, onPass, onClick }: { user: UserType, onLike
   );
 };
 
-const ProfileDetailModal = ({ user, onClose, onLike, onPass }: { user: UserType, onClose: () => void, onLike: () => void, onPass: () => void }) => {
+const ProfileDetailModal = ({ user, onClose, onLike, onPass, onMessage }: { user: UserType, onClose: () => void, onLike: () => void, onPass: () => void, onMessage: () => void }) => {
   const [activeImage, setActiveImage] = useState(0);
   
   return (
@@ -879,6 +980,12 @@ const ProfileDetailModal = ({ user, onClose, onLike, onPass }: { user: UserType,
               className="flex-1 h-14 rounded-2xl flex items-center justify-center border-2 border-slate-100 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
             >
               <X size={24} />
+            </button>
+            <button 
+              onClick={onMessage}
+              className="flex-1 h-14 rounded-2xl flex items-center justify-center border-2 border-slate-100 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
+            >
+              <MessageCircle size={24} />
             </button>
             <button 
               onClick={onLike}
@@ -1001,14 +1108,27 @@ const Dashboard = () => {
   );
 };
 
-const Chat = () => {
+const Chat = ({ selectedMatchId, setSelectedMatchId }: { selectedMatchId: string | null, setSelectedMatchId: (id: string | null) => void }) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
   const [matches, setMatches] = useState<any[]>([]);
-  const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const { user } = useAuth();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const selectedMatch = matches.find(m => m.id === selectedMatchId);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    if (selectedMatchId && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [selectedMatchId]);
 
   useEffect(() => {
     if (!user || !selectedMatchId) return;
@@ -1157,7 +1277,7 @@ const Chat = () => {
               </div>
             </div>
 
-            <div className="flex-1 p-6 overflow-y-auto space-y-4">
+            <div ref={scrollRef} className="flex-1 p-6 overflow-y-auto space-y-4">
               {messages.map((msg) => (
                 <div key={msg.id} className={cn(
                   "flex flex-col max-w-[80%]",
@@ -1185,6 +1305,7 @@ const Chat = () => {
 
             <form onSubmit={sendMessage} className="p-4 border-t border-inherit flex gap-3">
               <input 
+                ref={inputRef}
                 type="text" 
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
@@ -1313,6 +1434,8 @@ const SignupModal = ({ isOpen, onClose }: any) => {
     try {
       await setDoc(doc(db, 'users', user.uid), {
         uid: user.uid,
+        email: user.email || '',
+        displayName: formData.name || user.displayName || 'User',
         name: formData.name || user.displayName || 'User',
         age: parseInt(formData.age) || 20,
         gender: formData.gender || 'other',
@@ -1324,6 +1447,8 @@ const SignupModal = ({ isOpen, onClose }: any) => {
         zodiac: formData.zodiac || 'Not specified',
         images: formData.images,
         interests: formData.hobbies.length > 0 ? formData.hobbies : ['Music', 'Travel'],
+        role: 'user',
+        isBanned: false,
         isVerified: false,
         isPremium: false,
         isOnline: true,
@@ -1874,6 +1999,7 @@ function AppContent() {
   const [showSignup, setShowSignup] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState<UserType | null>(null);
   const [profiles, setProfiles] = useState<UserType[]>([]);
+  const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const { user, profile, loading, isSigningIn, signInError, signIn } = useAuth();
 
   useEffect(() => {
@@ -1884,6 +2010,11 @@ function AppContent() {
   }, [user, activeTab]);
 
   useEffect(() => {
+    if (!user) {
+      setProfiles(MOCK_PROFILES);
+      return;
+    }
+
     const q = query(collection(db, 'users'), limit(50));
     const unsubscribe = onSnapshot(q, (snap) => {
       const fetched = snap.docs
@@ -1954,6 +2085,21 @@ function AppContent() {
     // Remove from local list
     setProfiles(prev => prev.filter(p => p.id !== targetUser.id));
 
+    // Create a notification for the target user
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        userId: targetUser.id,
+        fromUserId: user.uid,
+        type: 'like',
+        title: 'New Like!',
+        message: `${profile?.name || 'Someone'} liked your profile.`,
+        createdAt: serverTimestamp(),
+        read: false
+      });
+    } catch (err) {
+      console.error("Error creating notification", err);
+    }
+
     // Randomly show match popup for demo or if it's a real match logic
     // In a real app, we'd check if the other user already liked us
     const matchChance = Math.random() > 0.3;
@@ -1966,6 +2112,17 @@ function AppContent() {
           timestamp: serverTimestamp(),
           typing: { [user.uid]: false, [targetUser.id]: false }
         });
+
+        // Also notify about the match
+        await addDoc(collection(db, 'notifications'), {
+          userId: targetUser.id,
+          fromUserId: user.uid,
+          type: 'match',
+          title: "It's a Match!",
+          message: `You and ${profile?.name || 'someone'} matched!`,
+          createdAt: serverTimestamp(),
+          read: false
+        });
       } catch (err) {
         handleFirestoreError(err, OperationType.WRITE, 'matches');
       }
@@ -1974,6 +2131,40 @@ function AppContent() {
 
   const handlePass = (targetUser: UserType) => {
     setProfiles(prev => prev.filter(p => p.id !== targetUser.id));
+  };
+
+  const handleMessage = async (targetUser: UserType) => {
+    if (!user) {
+      signIn();
+      return;
+    }
+
+    // Check if match exists
+    const q = query(
+      collection(db, 'matches'),
+      where('users', 'array-contains', user.uid)
+    );
+    
+    const snap = await getDocs(q);
+    let existingMatch = snap.docs.find(doc => doc.data().users.includes(targetUser.id));
+
+    if (existingMatch) {
+      setSelectedMatchId(existingMatch.id);
+    } else {
+      // Create a match so they can chat (as requested: "be able to send messages")
+      try {
+        const newMatch = await addDoc(collection(db, 'matches'), {
+          users: [user.uid, targetUser.id],
+          timestamp: serverTimestamp(),
+          typing: { [user.uid]: false, [targetUser.id]: false }
+        });
+        setSelectedMatchId(newMatch.id);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, 'matches');
+      }
+    }
+    
+    setActiveTab('chat');
   };
 
   return (
@@ -2025,6 +2216,7 @@ function AppContent() {
                     user={profile} 
                     onLike={() => handleLike(profile)} 
                     onPass={() => handlePass(profile)}
+                    onMessage={() => handleMessage(profile)}
                     onClick={() => setSelectedProfile(profile)}
                   />
                 ))}
@@ -2048,7 +2240,18 @@ function AppContent() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
             >
-              <Chat />
+              <Chat selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} />
+            </motion.div>
+          )}
+
+          {activeTab === 'notifications' && (
+            <motion.div
+              key="notifications"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <Notifications />
             </motion.div>
           )}
 
@@ -2095,6 +2298,7 @@ function AppContent() {
             onClose={() => setSelectedProfile(null)} 
             onLike={() => { handleLike(selectedProfile); setSelectedProfile(null); }}
             onPass={() => { handlePass(selectedProfile); setSelectedProfile(null); }}
+            onMessage={() => { handleMessage(selectedProfile); setSelectedProfile(null); }}
           />
         )}
       </AnimatePresence>
