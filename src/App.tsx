@@ -24,6 +24,8 @@ import {
   Camera,
   Plus,
   Trash2,
+  Edit3,
+  Flag,
   Bell,
   Eye,
   EyeOff,
@@ -483,10 +485,197 @@ const Notifications = () => {
   );
 };
 
+// --- Admin Components ---
+
+const ConfirmModal = ({ 
+  title, 
+  message, 
+  onConfirm, 
+  onCancel, 
+  confirmText = "Confirm", 
+  cancelText = "Cancel",
+  variant = "danger"
+}: { 
+  title: string; 
+  message: string; 
+  onConfirm: () => void; 
+  onCancel: () => void; 
+  confirmText?: string; 
+  cancelText?: string;
+  variant?: "danger" | "primary"
+}) => (
+  <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="bg-white rounded-[32px] p-8 max-w-sm w-full shadow-2xl"
+    >
+      <h3 className="text-xl font-bold mb-2">{title}</h3>
+      <p className="text-slate-500 mb-8 text-sm">{message}</p>
+      <div className="flex gap-3">
+        <button 
+          onClick={onCancel}
+          className="flex-1 py-3 rounded-2xl border border-slate-200 font-bold text-sm hover:bg-slate-50 transition-all"
+        >
+          {cancelText}
+        </button>
+        <button 
+          onClick={onConfirm}
+          className={cn(
+            "flex-1 py-3 rounded-2xl text-white font-bold text-sm transition-all",
+            variant === "danger" ? "bg-red-600 hover:bg-red-700 shadow-lg shadow-red-200" : "bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20"
+          )}
+        >
+          {confirmText}
+        </button>
+      </div>
+    </motion.div>
+  </div>
+);
+
+const UserEditModal = ({ 
+  user, 
+  onClose, 
+  onSave 
+}: { 
+  user: UserType; 
+  onClose: () => void; 
+  onSave: (updatedData: Partial<UserType>) => Promise<void> 
+}) => {
+  const [formData, setFormData] = useState({
+    name: user.name || '',
+    age: user.age || 18,
+    location: user.location || '',
+    bio: user.bio || '',
+    role: user.role || 'user',
+    isPremium: user.isPremium || false,
+    isVerified: user.isVerified || false
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await onSave(formData);
+      onClose();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-[32px] p-8 max-w-md w-full shadow-2xl max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold">Edit User Profile</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-all">
+            <X size={20} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Full Name</label>
+            <input 
+              type="text" 
+              value={formData.name}
+              onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all"
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Age</label>
+              <input 
+                type="number" 
+                value={formData.age}
+                onChange={e => setFormData(prev => ({ ...prev, age: parseInt(e.target.value) }))}
+                className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Role</label>
+              <select 
+                value={formData.role}
+                onChange={e => setFormData(prev => ({ ...prev, role: e.target.value as any }))}
+                className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all appearance-none bg-white"
+              >
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Location</label>
+            <input 
+              type="text" 
+              value={formData.location}
+              onChange={e => setFormData(prev => ({ ...prev, location: e.target.value }))}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Bio</label>
+            <textarea 
+              value={formData.bio}
+              onChange={e => setFormData(prev => ({ ...prev, bio: e.target.value }))}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all min-h-[100px] resize-none"
+            />
+          </div>
+
+          <div className="flex gap-4 pt-2">
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input 
+                type="checkbox" 
+                checked={formData.isPremium}
+                onChange={e => setFormData(prev => ({ ...prev, isPremium: e.target.checked }))}
+                className="w-5 h-5 rounded-lg border-slate-200 text-primary focus:ring-primary"
+              />
+              <span className="text-sm font-medium text-slate-600 group-hover:text-slate-900 transition-colors">Premium Status</span>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input 
+                type="checkbox" 
+                checked={formData.isVerified}
+                onChange={e => setFormData(prev => ({ ...prev, isVerified: e.target.checked }))}
+                className="w-5 h-5 rounded-lg border-slate-200 text-primary focus:ring-primary"
+              />
+              <span className="text-sm font-medium text-slate-600 group-hover:text-slate-900 transition-colors">Verified Badge</span>
+            </label>
+          </div>
+
+          <button 
+            type="submit" 
+            disabled={saving}
+            className="w-full py-4 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all disabled:opacity-50 mt-4"
+          >
+            {saving ? "Saving Changes..." : "Save Profile"}
+          </button>
+        </form>
+      </motion.div>
+    </div>
+  );
+};
+
 const AdminDashboard = () => {
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeSubTab, setActiveSubTab] = useState<'users' | 'settings'>('users');
+  const [editingUser, setEditingUser] = useState<UserType | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [appSettings, setAppSettings] = useState<any>({
     maintenanceMode: false,
     registrationEnabled: true,
@@ -541,11 +730,20 @@ const AdminDashboard = () => {
   };
 
   const deleteUser = async (userId: string) => {
-    if (!window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) return;
     try {
       await deleteDoc(doc(db, 'users', userId));
+      setConfirmDelete(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `users/${userId}`);
+    }
+  };
+
+  const handleSaveUser = async (updatedData: Partial<UserType>) => {
+    if (!editingUser) return;
+    try {
+      await updateDoc(doc(db, 'users', editingUser.id), updatedData);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${editingUser.id}`);
     }
   };
 
@@ -644,6 +842,13 @@ const AdminDashboard = () => {
                     <td className="p-5 text-right">
                       <div className="flex justify-end gap-2">
                         <button 
+                          onClick={() => setEditingUser(u)}
+                          className="p-2 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 transition-all"
+                          title="Edit User"
+                        >
+                          <Edit3 size={18} />
+                        </button>
+                        <button 
                           onClick={() => toggleBlock(u.id, !!u.isBlocked)}
                           className={cn(
                             "p-2 rounded-lg transition-all",
@@ -664,7 +869,7 @@ const AdminDashboard = () => {
                           <ShieldCheck size={18} />
                         </button>
                         <button 
-                          onClick={() => deleteUser(u.id)}
+                          onClick={() => setConfirmDelete(u.id)}
                           className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
                           title="Delete User"
                         >
@@ -763,6 +968,139 @@ const AdminDashboard = () => {
           </div>
         </div>
       )}
+
+      {/* Admin Modals */}
+      <AnimatePresence>
+        {editingUser && (
+          <UserEditModal 
+            user={editingUser} 
+            onClose={() => setEditingUser(null)} 
+            onSave={handleSaveUser} 
+          />
+        )}
+        {confirmDelete && (
+          <ConfirmModal 
+            title="Delete User Account"
+            message="Are you sure you want to permanently delete this user? This action cannot be undone and all their data will be lost."
+            onConfirm={() => deleteUser(confirmDelete)}
+            onCancel={() => setConfirmDelete(null)}
+            confirmText="Delete Permanently"
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+const ReportModal = ({ 
+  reportedUser, 
+  onClose 
+}: { 
+  reportedUser: UserType; 
+  onClose: () => void; 
+}) => {
+  const { user } = useAuth();
+  const [reason, setReason] = useState('');
+  const [message, setMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  const reasons = [
+    "Inappropriate content",
+    "Fake profile / Spam",
+    "Harassment",
+    "Underage",
+    "Other"
+  ];
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !reason) return;
+
+    setSubmitting(true);
+    try {
+      await addDoc(collection(db, 'reports'), {
+        reporterId: user.uid,
+        reportedId: reportedUser.id,
+        reason,
+        message,
+        status: 'pending',
+        createdAt: serverTimestamp()
+      });
+      setSubmitted(true);
+      setTimeout(onClose, 2000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'reports');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white rounded-[32px] p-8 max-w-md w-full shadow-2xl"
+      >
+        {submitted ? (
+          <div className="text-center py-8">
+            <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle2 size={32} />
+            </div>
+            <h3 className="text-xl font-bold mb-2">Report Submitted</h3>
+            <p className="text-slate-500 text-sm">Thank you for helping keep our community safe. Our team will review this report shortly.</p>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold">Report {reportedUser.name}</h3>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-all">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Reason for reporting</label>
+                <div className="grid grid-cols-1 gap-2">
+                  {reasons.map(r => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setReason(r)}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-2xl border text-left text-sm font-medium transition-all",
+                        reason === r ? "border-primary bg-primary/5 text-primary" : "border-slate-100 hover:border-slate-200 text-slate-600"
+                      )}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Additional Details (Optional)</label>
+                <textarea 
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  placeholder="Tell us more about the issue..."
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all min-h-[100px] resize-none text-sm"
+                />
+              </div>
+
+              <button 
+                type="submit" 
+                disabled={submitting || !reason}
+                className="w-full py-4 bg-red-600 text-white rounded-2xl font-bold shadow-lg shadow-red-200 hover:bg-red-700 transition-all disabled:opacity-50 mt-4"
+              >
+                {submitting ? "Submitting Report..." : "Submit Report"}
+              </button>
+            </form>
+          </>
+        )}
+      </motion.div>
     </div>
   );
 };
@@ -772,6 +1110,7 @@ const AdminDashboard = () => {
 const Navbar = ({ activeTab, setActiveTab, unreadCount }: any) => {
   const [isOpen, setIsOpen] = useState(false);
   const { user, profile, signIn, logout } = useAuth();
+  const isAdminUser = profile?.role === 'admin' || user?.email === 'siphes9812@gmail.com';
 
   const navItems = [
     { id: 'discover', label: 'Discover', icon: Search },
@@ -780,7 +1119,7 @@ const Navbar = ({ activeTab, setActiveTab, unreadCount }: any) => {
     { id: 'profile', label: 'Profile', icon: UserIcon },
   ];
 
-  if (profile?.role === 'admin') {
+  if (isAdminUser) {
     navItems.push({ id: 'admin', label: 'Admin', icon: ShieldCheck });
   }
 
@@ -793,8 +1132,8 @@ const Navbar = ({ activeTab, setActiveTab, unreadCount }: any) => {
               signIn();
               return;
             }
-            if (profile?.role === 'admin') {
-              setActiveTab('dashboard');
+            if (isAdminUser) {
+              setActiveTab('admin');
             } else {
               setActiveTab('discover');
             }
@@ -807,7 +1146,7 @@ const Navbar = ({ activeTab, setActiveTab, unreadCount }: any) => {
                 <span className="text-primary">uMzimkhulu</span>
                 <span className="text-slate-900"> Love Link</span>
               </span>
-              {profile?.role === 'admin' && (
+              {isAdminUser && (
                 <span className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter -mt-1 hidden sm:block opacity-0 group-hover:opacity-100 transition-opacity">
                   Click here if you want to get to admin dashboard
                 </span>
@@ -1072,7 +1411,7 @@ const Hero = () => {
   );
 };
 
-const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onClick }: { user: UserType, currentUserProfile?: UserType | null, onLike: () => void | Promise<void>, onPass: () => void, onMessage: () => void, onClick?: () => void, key?: string }) => {
+const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onReport, onClick }: { user: UserType, currentUserProfile?: UserType | null, onLike: () => void | Promise<void>, onPass: () => void, onMessage: () => void, onReport: () => void, onClick?: () => void, key?: string }) => {
   const distance = (currentUserProfile?.latitude && currentUserProfile?.longitude && user.latitude && user.longitude)
     ? calculateDistance(currentUserProfile.latitude, currentUserProfile.longitude, user.latitude, user.longitude)
     : null;
@@ -1131,6 +1470,13 @@ const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onCl
           <X size={20} />
         </button>
         <button 
+          onClick={(e) => { e.stopPropagation(); onReport(); }}
+          className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all active:scale-90"
+          title="Report User"
+        >
+          <Flag size={18} />
+        </button>
+        <button 
           onClick={(e) => { e.stopPropagation(); onMessage(); }}
           className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
         >
@@ -1147,7 +1493,7 @@ const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onCl
   );
 };
 
-const ProfileDetailModal = ({ user, currentUserProfile, onClose, onLike, onPass, onMessage }: { user: UserType, currentUserProfile?: UserType | null, onClose: () => void, onLike: () => void, onPass: () => void, onMessage: () => void }) => {
+const ProfileDetailModal = ({ user, currentUserProfile, onClose, onLike, onPass, onMessage, onReport }: { user: UserType, currentUserProfile?: UserType | null, onClose: () => void, onLike: () => void, onPass: () => void, onMessage: () => void, onReport: () => void }) => {
   const [activeImage, setActiveImage] = useState(0);
   const distance = (currentUserProfile?.latitude && currentUserProfile?.longitude && user.latitude && user.longitude)
     ? calculateDistance(currentUserProfile.latitude, currentUserProfile.longitude, user.latitude, user.longitude)
@@ -2209,6 +2555,11 @@ const ProfileView = () => {
               </p>
             </div>
             <div className="flex gap-2">
+              {profile.role === 'admin' && (
+                <div className="p-2 bg-slate-900 text-white rounded-xl" title="Administrator">
+                  <ShieldCheck size={20} />
+                </div>
+              )}
               {profile.isVerified && (
                 <div className="p-2 bg-accent/10 text-accent rounded-xl" title="Verified Account">
                   <ShieldCheck size={20} />
@@ -2625,12 +2976,14 @@ function AppContent() {
   const [profiles, setProfiles] = useState<UserType[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [reportingUser, setReportingUser] = useState<UserType | null>(null);
   const [appSettings, setAppSettings] = useState<any>({
     maintenanceMode: false,
     registrationEnabled: true,
     premiumOnly: false
   });
   const { user, profile, loading, isSigningIn, signInError, signIn, logout } = useAuth();
+  const isAdminUser = profile?.role === 'admin' || user?.email === 'siphes9812@gmail.com';
 
   useEffect(() => {
     const unsubscribe = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
@@ -2928,6 +3281,7 @@ function AppContent() {
                     onLike={() => handleLike(p)} 
                     onPass={() => handlePass(p)}
                     onMessage={() => handleMessage(p)}
+                    onReport={() => setReportingUser(p)}
                     onClick={() => setSelectedProfile(p)}
                   />
                 ))}
@@ -2970,7 +3324,7 @@ function AppContent() {
             </motion.div>
           )}
 
-          {activeTab === 'dashboard' && profile?.role === 'admin' && (
+          {activeTab === 'dashboard' && isAdminUser && (
             <motion.div
               key="dashboard"
               initial={{ opacity: 0, y: 20 }}
@@ -2992,7 +3346,7 @@ function AppContent() {
             </motion.div>
           )}
 
-          {activeTab === 'admin' && profile?.role === 'admin' && (
+          {activeTab === 'admin' && isAdminUser && (
             <motion.div
               key="admin"
               initial={{ opacity: 0, scale: 0.95 }}
@@ -3015,6 +3369,17 @@ function AppContent() {
             onLike={() => { handleLike(selectedProfile); setSelectedProfile(null); }}
             onPass={() => { handlePass(selectedProfile); setSelectedProfile(null); }}
             onMessage={() => { handleMessage(selectedProfile); setSelectedProfile(null); }}
+            onReport={() => { setReportingUser(selectedProfile); setSelectedProfile(null); }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Report Modal */}
+      <AnimatePresence>
+        {reportingUser && (
+          <ReportModal 
+            reportedUser={reportingUser} 
+            onClose={() => setReportingUser(null)} 
           />
         )}
       </AnimatePresence>

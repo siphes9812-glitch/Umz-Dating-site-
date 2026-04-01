@@ -56,6 +56,20 @@
         "timestamp": { "type": "string", "format": "date-time", "description": "When the notification was created" }
       },
       "required": ["userId", "type", "fromUserId", "text", "read", "timestamp"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "User report for a profile",
+      "type": "object",
+      "properties": {
+        "reporterId": { "type": "string", "description": "UID of the reporter" },
+        "reportedId": { "type": "string", "description": "UID of the reported user" },
+        "reason": { "type": "string", "description": "Reason for reporting" },
+        "message": { "type": "string", "description": "Optional message" },
+        "status": { "type": "string", "enum": ["pending", "reviewed", "resolved"], "description": "Status of the report" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the report was created" }
+      },
+      "required": ["reporterId", "reportedId", "reason", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -74,6 +88,10 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "User notifications"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "User reports"
     }
   }
 }
