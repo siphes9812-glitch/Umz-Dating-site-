@@ -28,11 +28,15 @@ import {
   Eye,
   EyeOff,
   Image as ImageIcon,
-  ChevronLeft
+  ChevronLeft,
+  MapPin,
+  Sparkles
 } from 'lucide-react';
 import { cn } from './lib/utils';
-import { User as UserType, MOCK_PROFILES } from './types';
+import { User as UserType } from './types';
+import { PREDEFINED_INTERESTS } from './constants';
 import { format, formatDistanceToNow } from 'date-fns';
+import { GoogleGenAI } from "@google/genai";
 import { 
   LineChart, 
   Line, 
@@ -143,6 +147,40 @@ const ErrorBoundary = ({ children }: { children: React.ReactNode }) => {
     );
   }
   return <>{children}</>;
+};
+
+// --- Helpers ---
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  const R = 6371; // Radius of the earth in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c; // Distance in km
+  return Math.round(d);
+};
+
+const generateBioWithAI = async (interests: string[], name: string) => {
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const prompt = `Generate a short, engaging, and friendly dating profile bio for ${name}. 
+    Interests: ${interests.join(', ')}. 
+    Keep it under 200 characters. 
+    Make it sound human and approachable.`;
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
+    
+    return response.text?.trim() || "";
+  } catch (err) {
+    console.error("AI Bio Generation Error", err);
+    return "";
+  }
 };
 
 // --- Context ---
@@ -361,6 +399,16 @@ const Notifications = () => {
     }
   };
 
+  const markAllAsRead = async () => {
+    if (!user) return;
+    const unread = notifications.filter(n => !n.read);
+    try {
+      await Promise.all(unread.map(n => updateDoc(doc(db, 'notifications', n.id), { read: true })));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'notifications');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -372,8 +420,18 @@ const Notifications = () => {
   return (
     <div className="max-w-2xl mx-auto py-8 px-4">
       <div className="flex items-center justify-between mb-8">
-        <h2 className="text-2xl font-bold">Notifications</h2>
-        <span className="text-sm text-slate-500">{notifications.filter(n => !n.read).length} unread</span>
+        <div>
+          <h2 className="text-2xl font-bold">Notifications</h2>
+          <span className="text-sm text-slate-500">{notifications.filter(n => !n.read).length} unread</span>
+        </div>
+        {notifications.some(n => !n.read) && (
+          <button 
+            onClick={markAllAsRead}
+            className="text-xs font-bold text-primary hover:text-primary/80 transition-colors"
+          >
+            Mark all as read
+          </button>
+        )}
       </div>
 
       <div className="space-y-4">
@@ -711,14 +769,14 @@ const AdminDashboard = () => {
 
 // --- Components ---
 
-const Navbar = ({ activeTab, setActiveTab }: any) => {
+const Navbar = ({ activeTab, setActiveTab, unreadCount }: any) => {
   const [isOpen, setIsOpen] = useState(false);
   const { user, profile, signIn, logout } = useAuth();
 
   const navItems = [
     { id: 'discover', label: 'Discover', icon: Search },
     { id: 'chat', label: 'Messages', icon: MessageCircle },
-    { id: 'notifications', label: 'Notifications', icon: Bell },
+    { id: 'notifications', label: 'Notifications', icon: Bell, badge: unreadCount > 0 ? unreadCount : null },
     { id: 'profile', label: 'Profile', icon: UserIcon },
   ];
 
@@ -772,6 +830,11 @@ const Navbar = ({ activeTab, setActiveTab }: any) => {
               >
                 <item.icon size={16} />
                 {item.label}
+                {item.badge && (
+                  <span className="absolute -top-1 -right-2 bg-primary text-white text-[8px] font-bold w-4 h-4 rounded-full flex items-center justify-center border-2 border-white">
+                    {item.badge}
+                  </span>
+                )}
                 {activeTab === item.id && (
                   <motion.div 
                     layoutId="navUnderline"
@@ -832,6 +895,11 @@ const Navbar = ({ activeTab, setActiveTab }: any) => {
           >
             <item.icon size={18} />
             <span className="font-semibold">{item.label}</span>
+            {item.badge && (
+              <span className="ml-auto bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                {item.badge}
+              </span>
+            )}
           </button>
         ))}
         {!user ? (
@@ -1004,7 +1072,11 @@ const Hero = () => {
   );
 };
 
-const ProfileCard = ({ user, onLike, onPass, onMessage, onClick }: { user: UserType, onLike: () => void | Promise<void>, onPass: () => void, onMessage: () => void, onClick?: () => void, key?: string }) => {
+const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onClick }: { user: UserType, currentUserProfile?: UserType | null, onLike: () => void | Promise<void>, onPass: () => void, onMessage: () => void, onClick?: () => void, key?: string }) => {
+  const distance = (currentUserProfile?.latitude && currentUserProfile?.longitude && user.latitude && user.longitude)
+    ? calculateDistance(currentUserProfile.latitude, currentUserProfile.longitude, user.latitude, user.longitude)
+    : null;
+
   return (
     <motion.div
       whileHover={{ y: -10 }}
@@ -1023,6 +1095,13 @@ const ProfileCard = ({ user, onLike, onPass, onMessage, onClick }: { user: UserT
         {user.isPremium && (
           <div className="absolute top-4 left-4 bg-accent/90 backdrop-blur-md text-white p-2 rounded-full shadow-lg animate-pulse">
             <Crown size={16} />
+          </div>
+        )}
+
+        {distance !== null && (
+          <div className="absolute top-4 right-4 bg-black/40 backdrop-blur-md text-white px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-1">
+            <MapPin size={10} />
+            {distance} km away
           </div>
         )}
 
@@ -1068,8 +1147,11 @@ const ProfileCard = ({ user, onLike, onPass, onMessage, onClick }: { user: UserT
   );
 };
 
-const ProfileDetailModal = ({ user, onClose, onLike, onPass, onMessage }: { user: UserType, onClose: () => void, onLike: () => void, onPass: () => void, onMessage: () => void }) => {
+const ProfileDetailModal = ({ user, currentUserProfile, onClose, onLike, onPass, onMessage }: { user: UserType, currentUserProfile?: UserType | null, onClose: () => void, onLike: () => void, onPass: () => void, onMessage: () => void }) => {
   const [activeImage, setActiveImage] = useState(0);
+  const distance = (currentUserProfile?.latitude && currentUserProfile?.longitude && user.latitude && user.longitude)
+    ? calculateDistance(currentUserProfile.latitude, currentUserProfile.longitude, user.latitude, user.longitude)
+    : null;
   
   return (
     <motion.div
@@ -1096,7 +1178,14 @@ const ProfileDetailModal = ({ user, onClose, onLike, onPass, onMessage }: { user
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
           
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
+          {distance !== null && (
+            <div className="absolute top-4 right-4 bg-black/40 backdrop-blur-md text-white px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5">
+              <MapPin size={14} />
+              {distance} km away
+            </div>
+          )}
+
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2">
             {user.images?.map((_, i) => (
               <button 
                 key={i} 
@@ -1253,26 +1342,9 @@ const Dashboard = () => {
         <div className="p-8 rounded-3xl border bg-white border-black/5 shadow-sm">
           <h3 className="text-xl font-bold mb-6">Recent Matches</h3>
           <div className="space-y-6">
-            {MOCK_PROFILES.slice(0, 3).map((profile, i) => (
-              <div key={i} className="flex items-center gap-4">
-                <div className="relative">
-                  <img 
-                    src={profile.images?.[0] || `https://picsum.photos/seed/${profile.id}/400/600`} 
-                    alt={profile.name} 
-                    className="w-12 h-12 rounded-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-inherit rounded-full" />
-                </div>
-                <div className="flex-1">
-                  <h5 className="font-bold text-sm">{profile.name}</h5>
-                  <p className="text-xs text-slate-500">Matched 2 hours ago</p>
-                </div>
-                <button className="p-2 text-primary hover:bg-primary/5 rounded-lg transition-colors">
-                  <MessageCircle size={18} />
-                </button>
-              </div>
-            ))}
+            <div className="text-center py-10 text-slate-400 text-sm italic">
+              No recent matches to show.
+            </div>
           </div>
           <button className="w-full mt-8 py-3 rounded-xl border border-primary/20 text-primary font-semibold hover:bg-primary/5 transition-all">
             View All Matches
@@ -1283,7 +1355,7 @@ const Dashboard = () => {
   );
 };
 
-const Chat = ({ selectedMatchId, setSelectedMatchId }: { selectedMatchId: string | null, setSelectedMatchId: (id: string | null) => void }) => {
+const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchId: string | null, setSelectedMatchId: (id: string | null) => void, profile: UserType | null }) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
   const [matches, setMatches] = useState<any[]>([]);
@@ -1304,6 +1376,24 @@ const Chat = ({ selectedMatchId, setSelectedMatchId }: { selectedMatchId: string
       inputRef.current.focus();
     }
   }, [selectedMatchId]);
+
+  useEffect(() => {
+    if (!user || !selectedMatchId) return;
+
+    // Mark message notifications for this match as read
+    const q = query(
+      collection(db, 'notifications'),
+      where('userId', '==', user.uid),
+      where('matchId', '==', selectedMatchId),
+      where('read', '==', false)
+    );
+
+    getDocs(q).then(snap => {
+      snap.docs.forEach(d => {
+        updateDoc(doc(db, 'notifications', d.id), { read: true });
+      });
+    });
+  }, [user, selectedMatchId]);
 
   useEffect(() => {
     if (!user || !selectedMatchId) return;
@@ -1380,7 +1470,21 @@ const Chat = ({ selectedMatchId, setSelectedMatchId }: { selectedMatchId: string
     };
 
     try {
+      const chatId = [user.uid, selectedMatch.otherUser.id].sort().join('_');
       await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
+      
+      // Also create a notification for the message
+      await addDoc(collection(db, 'notifications'), {
+        userId: selectedMatch.otherUser.id,
+        fromUserId: user.uid,
+        type: 'message',
+        title: 'New Message',
+        message: `${profile?.name || 'Someone'} sent you a message: ${message.substring(0, 30)}${message.length > 30 ? '...' : ''}`,
+        createdAt: serverTimestamp(),
+        read: false,
+        matchId: selectedMatch.id
+      });
+
       setMessage('');
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `chats/${chatId}/messages`);
@@ -1593,10 +1697,39 @@ const SignupModal = ({ isOpen, onClose }: any) => {
     education: '',
     zodiac: '',
     hobbies: [] as string[],
-    images: [] as string[]
+    images: [] as string[],
+    latitude: null as number | null,
+    longitude: null as number | null
   });
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGeneratingBio, setIsGeneratingBio] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setFormData(prev => ({
+            ...prev,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          }));
+        },
+        (error) => console.error("Geolocation error:", error)
+      );
+    }
+  }, [isOpen]);
+
+  const handleAiBio = async () => {
+    if (formData.hobbies.length === 0) {
+      alert("Please select some interests first to help the AI generate a better bio!");
+      return;
+    }
+    setIsGeneratingBio(true);
+    const bio = await generateBioWithAI(formData.hobbies, formData.name || "there");
+    setFormData(prev => ({ ...prev, bio }));
+    setIsGeneratingBio(false);
+  };
 
   const compressImage = (base64Str: string, maxWidth = 600, maxHeight = 600, quality = 0.6): Promise<string> => {
     return new Promise((resolve) => {
@@ -1685,7 +1818,9 @@ const SignupModal = ({ isOpen, onClose }: any) => {
         education: formData.education || 'Not specified',
         zodiac: formData.zodiac || 'Not specified',
         images: formData.images,
-        interests: formData.hobbies.length > 0 ? formData.hobbies : ['Music', 'Travel'],
+        interests: formData.hobbies,
+        latitude: formData.latitude,
+        longitude: formData.longitude,
         role: 'user',
         isBanned: false,
         isVerified: false,
@@ -1704,14 +1839,15 @@ const SignupModal = ({ isOpen, onClose }: any) => {
 
   if (!isOpen) return null;
 
-  const totalSteps = 5;
+  const totalSteps = 6;
 
   const isStepValid = () => {
     if (step === 1) return formData.name && formData.age;
     if (step === 2) return formData.gender && formData.lookingFor;
     if (step === 3) return formData.height && formData.education;
     if (step === 4) return formData.zodiac && formData.bio;
-    if (step === 5) return formData.images.length >= 2;
+    if (step === 5) return formData.hobbies.length >= 3;
+    if (step === 6) return formData.images.length >= 2;
     return true;
   };
 
@@ -1733,7 +1869,7 @@ const SignupModal = ({ isOpen, onClose }: any) => {
 
         <div className="p-8">
           <div className="flex gap-2 mb-8">
-            {[1, 2, 3, 4, 5].map(s => (
+            {[1, 2, 3, 4, 5, 6].map(s => (
               <div key={s} className={cn("h-1.5 flex-1 rounded-full transition-all duration-500", s <= step ? "bg-primary" : "bg-slate-100")} />
             ))}
           </div>
@@ -1887,7 +2023,17 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Bio</label>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Bio</label>
+                      <button 
+                        onClick={handleAiBio}
+                        disabled={isGeneratingBio}
+                        className="text-[10px] font-bold text-primary hover:text-primary/80 flex items-center gap-1 disabled:opacity-50"
+                      >
+                        <Sparkles size={12} />
+                        {isGeneratingBio ? "Generating..." : "AI Bio Assistant"}
+                      </button>
+                    </div>
                     <textarea 
                       value={formData.bio}
                       onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
@@ -1902,6 +2048,43 @@ const SignupModal = ({ isOpen, onClose }: any) => {
             {step === 5 && (
               <motion.div
                 key="step5"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+              >
+                <h3 className="text-2xl font-bold mb-2">Interests & Hobbies</h3>
+                <p className="text-slate-500 text-sm mb-6">Select at least 3 things you love.</p>
+                <div className="flex flex-wrap gap-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                  {PREDEFINED_INTERESTS.map(interest => {
+                    const isSelected = formData.hobbies.includes(interest);
+                    return (
+                      <button
+                        key={interest}
+                        onClick={() => {
+                          if (isSelected) {
+                            setFormData({ ...formData, hobbies: formData.hobbies.filter(h => h !== interest) });
+                          } else {
+                            setFormData({ ...formData, hobbies: [...formData.hobbies, interest] });
+                          }
+                        }}
+                        className={cn(
+                          "px-4 py-2 rounded-full text-xs font-bold transition-all border",
+                          isSelected 
+                            ? "bg-primary border-primary text-white" 
+                            : "bg-slate-50 border-slate-100 text-slate-600 hover:border-primary"
+                        )}
+                      >
+                        {interest}
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+
+            {step === 6 && (
+              <motion.div
+                key="step6"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
@@ -2112,6 +2295,37 @@ const ProfileView = () => {
 const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: () => void }) => {
   const [formData, setFormData] = useState({ ...profile });
   const [isSaving, setIsSaving] = useState(false);
+  const [isGeneratingBio, setIsGeneratingBio] = useState(false);
+
+  const handleAiBio = async () => {
+    if ((formData.interests || []).length === 0) {
+      alert("Please select some interests first to help the AI generate a better bio!");
+      return;
+    }
+    setIsGeneratingBio(true);
+    const bio = await generateBioWithAI(formData.interests || [], formData.name || "there");
+    setFormData(prev => ({ ...prev, bio }));
+    setIsGeneratingBio(false);
+  };
+
+  const updateLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setFormData(prev => ({
+            ...prev,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          }));
+          alert("Location updated successfully!");
+        },
+        (error) => {
+          console.error("Geolocation error:", error);
+          alert("Could not get your location. Please check your browser permissions.");
+        }
+      );
+    }
+  };
 
   const compressImage = (base64Str: string, maxWidth = 600, maxHeight = 600, quality = 0.6): Promise<string> => {
     return new Promise((resolve) => {
@@ -2234,12 +2448,27 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
             </div>
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Location</label>
-              <input 
-                type="text" 
-                value={formData.location}
-                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
-              />
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={formData.location}
+                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                  className="flex-1 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+                />
+                <button 
+                  type="button"
+                  onClick={updateLocation}
+                  className="px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 hover:bg-slate-100 transition-all text-primary"
+                  title="Update to current location"
+                >
+                  <MapPin size={18} />
+                </button>
+              </div>
+              {formData.latitude && (
+                <p className="text-[10px] text-slate-400 mt-1 italic">
+                  GPS: {formData.latitude.toFixed(4)}, {formData.longitude?.toFixed(4)}
+                </p>
+              )}
             </div>
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Looking For</label>
@@ -2256,13 +2485,54 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
           </div>
 
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Bio</label>
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Bio</label>
+              <button 
+                onClick={handleAiBio}
+                disabled={isGeneratingBio}
+                className="text-[10px] font-bold text-primary hover:text-primary/80 flex items-center gap-1 disabled:opacity-50"
+              >
+                <Sparkles size={12} />
+                {isGeneratingBio ? "Generating..." : "AI Bio Assistant"}
+              </button>
+            </div>
             <textarea 
               value={formData.bio}
               onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
               rows={4}
               className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all resize-none"
             />
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Interests</label>
+            <div className="flex flex-wrap gap-2 max-h-[150px] overflow-y-auto p-2 border border-slate-100 rounded-2xl bg-slate-50 custom-scrollbar">
+              {PREDEFINED_INTERESTS.map(interest => {
+                const isSelected = (formData.interests || []).includes(interest);
+                return (
+                  <button
+                    key={interest}
+                    type="button"
+                    onClick={() => {
+                      const currentInterests = formData.interests || [];
+                      if (isSelected) {
+                        setFormData({ ...formData, interests: currentInterests.filter(h => h !== interest) });
+                      } else {
+                        setFormData({ ...formData, interests: [...currentInterests, interest] });
+                      }
+                    }}
+                    className={cn(
+                      "px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border",
+                      isSelected 
+                        ? "bg-primary border-primary text-white" 
+                        : "bg-white border-slate-100 text-slate-600 hover:border-primary"
+                    )}
+                  >
+                    {interest}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div>
@@ -2354,6 +2624,7 @@ function AppContent() {
   const [selectedProfile, setSelectedProfile] = useState<UserType | null>(null);
   const [profiles, setProfiles] = useState<UserType[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [appSettings, setAppSettings] = useState<any>({
     maintenanceMode: false,
     registrationEnabled: true,
@@ -2379,7 +2650,7 @@ function AppContent() {
 
   useEffect(() => {
     if (!user) {
-      setProfiles(MOCK_PROFILES);
+      setProfiles([]);
       return;
     }
 
@@ -2411,26 +2682,36 @@ function AppContent() {
       if (fetched.length > 0) {
         setProfiles(fetched);
       } else {
-        // Fallback to mock profiles but still filter them
-        const filteredMock = MOCK_PROFILES.filter(p => {
-          if (p.id === user?.uid) return false;
-          if (p.isBanned || p.isBlocked) return false;
-          if (!profile) return true;
-          const myGender = profile.gender;
-          const myLookingFor = profile.lookingFor;
-          const theirGender = p.gender;
-          const iAmInterested = (myLookingFor === 'Both') || 
-                                (myLookingFor === 'Women' && theirGender === 'female') || 
-                                (myLookingFor === 'Men' && theirGender === 'male');
-          return iAmInterested;
-        });
-        setProfiles(filteredMock);
+        setProfiles([]);
       }
     }, (err) => {
       if (err.code === 'permission-denied') {
-        setProfiles(MOCK_PROFILES.filter(p => p.id !== user?.uid));
+        setProfiles([]);
       } else {
         handleFirestoreError(err, OperationType.LIST, 'users');
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setUnreadCount(0);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'notifications'),
+      where('userId', '==', user.uid),
+      where('read', '==', false)
+    );
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setUnreadCount(snap.size);
+    }, (err) => {
+      if (err.code !== 'permission-denied') {
+        handleFirestoreError(err, OperationType.GET, 'notifications');
       }
     });
 
@@ -2600,6 +2881,7 @@ function AppContent() {
       <Navbar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
+        unreadCount={unreadCount}
       />
 
       <main>
@@ -2638,14 +2920,15 @@ function AppContent() {
                 </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-                {profiles.map(profile => (
+                {profiles.map(p => (
                   <ProfileCard 
-                    key={profile.id} 
-                    user={profile} 
-                    onLike={() => handleLike(profile)} 
-                    onPass={() => handlePass(profile)}
-                    onMessage={() => handleMessage(profile)}
-                    onClick={() => setSelectedProfile(profile)}
+                    key={p.id} 
+                    user={p} 
+                    currentUserProfile={profile}
+                    onLike={() => handleLike(p)} 
+                    onPass={() => handlePass(p)}
+                    onMessage={() => handleMessage(p)}
+                    onClick={() => setSelectedProfile(p)}
                   />
                 ))}
                 {profiles.length === 0 && (
@@ -2668,7 +2951,11 @@ function AppContent() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
             >
-              <Chat selectedMatchId={selectedMatchId} setSelectedMatchId={setSelectedMatchId} />
+              <Chat 
+              selectedMatchId={selectedMatchId} 
+              setSelectedMatchId={setSelectedMatchId} 
+              profile={profile}
+            />
             </motion.div>
           )}
 
@@ -2723,6 +3010,7 @@ function AppContent() {
         {selectedProfile && (
           <ProfileDetailModal 
             user={selectedProfile} 
+            currentUserProfile={profile}
             onClose={() => setSelectedProfile(null)} 
             onLike={() => { handleLike(selectedProfile); setSelectedProfile(null); }}
             onPass={() => { handlePass(selectedProfile); setSelectedProfile(null); }}
@@ -2752,12 +3040,12 @@ function AppContent() {
                     <img src={user?.photoURL || "https://picsum.photos/seed/me/200/200"} className="w-16 h-16 rounded-full border-4 border-slate-100 object-cover" referrerPolicy="no-referrer" />
                   </div>
                   <div className="relative">
-                    <img src={MOCK_PROFILES[0].images?.[0]} className="w-16 h-16 rounded-full border-4 border-slate-100 object-cover" referrerPolicy="no-referrer" />
+                    <img src={selectedProfile?.images?.[0] || "https://picsum.photos/seed/them/200/200"} className="w-16 h-16 rounded-full border-4 border-slate-100 object-cover" referrerPolicy="no-referrer" />
                   </div>
                 </div>
                 
                 <h2 className="font-display text-2xl font-bold text-slate-900 mb-2">It's a Match! 🎉</h2>
-                <p className="text-slate-500 mb-5 text-xs">You and Thando have liked each other. Start the conversation now!</p>
+                <p className="text-slate-500 mb-5 text-xs">You and {selectedProfile?.name || 'someone'} have liked each other. Start the conversation now!</p>
                 
                 <div className="space-y-2">
                   <button 
