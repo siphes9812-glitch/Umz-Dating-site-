@@ -123,10 +123,10 @@ service cloud.firestore {
     function isValidNotification(data) {
       return data.keys().hasAll(['userId', 'type', 'fromUserId', 'title', 'message', 'read', 'createdAt']) &&
              data.userId is string &&
-             data.type in ['match', 'message', 'like'] &&
-             data.fromUserId == request.auth.uid &&
+             (data.type in ['match', 'message', 'like', 'system']) &&
+             (data.fromUserId == request.auth.uid || (isAdmin() && data.fromUserId == 'admin')) &&
              data.title is string && data.title.size() <= 100 &&
-             data.message is string && data.message.size() <= 500 &&
+             data.message is string && data.message.size() <= 1000 &&
              data.read is bool &&
              data.createdAt is timestamp;
     }
@@ -176,7 +176,7 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow read: if isAdmin() || (isNotRestricted() && isOwner(resource.data.userId));
-      allow create: if isNotRestricted() && isValidNotification(request.resource.data);
+      allow create: if (isNotRestricted() && isValidNotification(request.resource.data)) || isAdmin();
       allow update: if isAdmin() || (isNotRestricted() && isOwner(resource.data.userId) && 
                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']));
       allow delete: if isAdmin() || (isNotRestricted() && isOwner(resource.data.userId));
