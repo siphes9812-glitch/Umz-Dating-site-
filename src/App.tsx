@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Mail,
   Lock,
+  LogIn,
   Camera,
   Plus,
   Trash2,
@@ -37,7 +38,9 @@ import {
   CreditCard,
   Layout,
   BarChart3,
-  LifeBuoy
+  LifeBuoy,
+  Filter,
+  Send
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { User as UserType } from './types';
@@ -83,7 +86,8 @@ import {
   addDoc,
   getDocFromServer,
   updateDoc,
-  deleteDoc
+  deleteDoc,
+  writeBatch
 } from 'firebase/firestore';
 
 // --- Error Handling ---
@@ -188,6 +192,38 @@ const generateBioWithAI = async (interests: string[], name: string) => {
     console.error("AI Bio Generation Error", err);
     return "";
   }
+};
+
+const generateIcebreakerWithAI = async (otherUserName: string, otherUserInterests: string[], myName: string) => {
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const prompt = `You are a helpful dating wingman. Generate a fun, unique, and non-cheesy icebreaker message for ${myName} to send to ${otherUserName}.
+    ${otherUserName}'s interests: ${otherUserInterests.join(', ')}.
+    Keep it short, friendly, and based on their interests. 
+    Do not use generic lines like "Hey, how are you?". 
+    Make it a question or a playful comment.`;
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
+    
+    return response.text?.trim() || "";
+  } catch (err) {
+    console.error("AI Icebreaker Generation Error", err);
+    return "";
+  }
+};
+
+const calculateCompleteness = (profile: UserType) => {
+  let score = 0;
+  if (profile.name) score += 10;
+  if (profile.age) score += 10;
+  if (profile.bio) score += 20;
+  if (profile.location) score += 10;
+  if (profile.interests && profile.interests.length > 0) score += 20;
+  if (profile.images && profile.images.length > 0) score += 30;
+  return score;
 };
 
 // --- Context ---
@@ -744,11 +780,20 @@ const AdminDashboard = () => {
   const [showCreateAdmin, setShowCreateAdmin] = useState(false);
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [supportTickets, setSupportTickets] = useState<any[]>([]);
+  const [matches, setMatches] = useState<any[]>([]);
+  const [securityLogs, setSecurityLogs] = useState<any[]>([]);
+  const [editingContent, setEditingContent] = useState<{ type: 'terms' | 'privacy', value: string } | null>(null);
   const [appSettings, setAppSettings] = useState<any>({
     maintenanceMode: false,
     registrationEnabled: true,
     premiumOnly: false,
-    broadcastMessage: ''
+    broadcastMessage: '',
+    termsOfService: '',
+    privacyPolicy: '',
+    globalDistanceLimit: 100,
+    ageRangeBuffer: 5,
+    subscriptionPrice: 99
   });
 
   useEffect(() => {
@@ -766,15 +811,33 @@ const AdminDashboard = () => {
     const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        setAppSettings(data);
+        setAppSettings(prev => ({ ...prev, ...data }));
         setBroadcastMessage(data.broadcastMessage || '');
       }
+    });
+
+    const qTickets = query(collection(db, 'support_tickets'), orderBy('createdAt', 'desc'));
+    const unsubscribeTickets = onSnapshot(qTickets, (snap) => {
+      setSupportTickets(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const qMatches = query(collection(db, 'matches'), orderBy('timestamp', 'desc'), limit(50));
+    const unsubscribeMatches = onSnapshot(qMatches, (snap) => {
+      setMatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const qLogs = query(collection(db, 'security_logs'), orderBy('timestamp', 'desc'), limit(20));
+    const unsubscribeLogs = onSnapshot(qLogs, (snap) => {
+      setSecurityLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
     return () => {
       unsubscribeUsers();
       unsubscribeReports();
       unsubscribeSettings();
+      unsubscribeTickets();
+      unsubscribeMatches();
+      unsubscribeLogs();
     };
   }, []);
 
@@ -827,8 +890,55 @@ const AdminDashboard = () => {
     setIsBroadcasting(true);
     try {
       await updateGlobalSettings({ broadcastMessage });
+      
+      if (broadcastMessage.trim()) {
+        // Create notifications for users only if there's a message
+        const batch = writeBatch(db);
+        users.slice(0, 50).forEach(u => {
+          const notifRef = doc(collection(db, 'notifications'));
+          batch.set(notifRef, {
+            userId: u.id,
+            type: 'system',
+            fromUserId: 'admin',
+            title: 'System Announcement',
+            message: broadcastMessage,
+            read: false,
+            createdAt: serverTimestamp()
+          });
+        });
+        await batch.commit();
+        alert("Broadcast message updated and notifications sent to users!");
+      } else {
+        alert("Broadcast message cleared!");
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'broadcast');
     } finally {
       setIsBroadcasting(false);
+    }
+  };
+
+  const updateTicketStatus = async (ticketId: string, status: string) => {
+    try {
+      await updateDoc(doc(db, 'support_tickets', ticketId), { status, updatedAt: serverTimestamp() });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `support_tickets/${ticketId}`);
+    }
+  };
+
+  const deleteMatch = async (matchId: string) => {
+    try {
+      await deleteDoc(doc(db, 'matches', matchId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `matches/${matchId}`);
+    }
+  };
+
+  const verifyUser = async (userId: string) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), { isVerified: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
     }
   };
 
@@ -881,6 +991,32 @@ const AdminDashboard = () => {
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${editingUser.id}`);
     }
+  };
+
+  const ContentEditModal = ({ type, initialValue, onClose, onSave }: any) => {
+    const [value, setValue] = useState(initialValue);
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+        <div className="bg-white rounded-[32px] w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+          <div className="p-8 border-b border-slate-100 flex items-center justify-between">
+            <h3 className="text-2xl font-bold capitalize">Edit {type === 'terms' ? 'Terms of Service' : 'Privacy Policy'}</h3>
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-all"><X size={24} /></button>
+          </div>
+          <div className="p-8 flex-1 overflow-y-auto">
+            <textarea 
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="w-full h-full min-h-[400px] p-6 rounded-2xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all font-mono text-sm"
+              placeholder={`Enter ${type} content...`}
+            />
+          </div>
+          <div className="p-8 border-t border-slate-100 flex justify-end gap-4">
+            <button onClick={onClose} className="px-8 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all">Cancel</button>
+            <button onClick={() => onSave(value)} className="px-8 py-3 rounded-2xl font-bold bg-primary text-white shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all">Save Changes</button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   if (loading) return <div className="pt-32 text-center">Loading Admin Panel...</div>;
@@ -1149,25 +1285,79 @@ const AdminDashboard = () => {
               <div key={u.id} className="p-4 border rounded-2xl flex flex-col items-center">
                 <img src={u.images?.[0]} className="w-20 h-20 rounded-full object-cover mb-3" alt="" />
                 <div className="font-bold text-sm mb-1">{u.name}</div>
-                <button className="text-[10px] font-bold text-primary uppercase tracking-wider">Review Profile</button>
+                <button 
+                  onClick={() => setEditingUser(u)}
+                  className="text-[10px] font-bold text-primary uppercase tracking-wider hover:underline"
+                >
+                  Review Profile
+                </button>
               </div>
             ))}
+            {users.filter(u => !u.isVerified).length === 0 && (
+              <div className="col-span-3 py-10 text-slate-400 italic">No profiles pending moderation.</div>
+            )}
           </div>
         </div>
       )}
 
       {activeSubTab === 'interactions' && (
-        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
-          <MessageSquare size={48} className="mx-auto mb-4 text-primary opacity-20" />
-          <h3 className="text-xl font-bold mb-2">Match & Interaction Monitoring</h3>
-          <p className="text-slate-500 max-w-md mx-auto">Monitor system-wide matches and message patterns to detect spam or harassment.</p>
-          <div className="mt-8 p-6 bg-slate-50 rounded-2xl border border-slate-100 text-left">
-            <div className="text-xs font-bold text-slate-400 uppercase mb-4">Live Interaction Feed</div>
-            <div className="space-y-3">
-              <div className="text-xs text-slate-600">New match created between User A and User B</div>
-              <div className="text-xs text-slate-600">Message sent from User C to User D</div>
-              <div className="text-xs text-slate-600">User E liked User F</div>
-            </div>
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-bold flex items-center gap-2">
+              <MessageSquare size={20} className="text-primary" />
+              Match & Interaction Monitoring
+            </h3>
+            <div className="text-xs font-bold text-slate-400 uppercase">Recent Matches: {matches.length}</div>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Users</th>
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Date</th>
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {matches.map(m => {
+                  const user1 = users.find(u => u.id === m.users[0]);
+                  const user2 = users.find(u => u.id === m.users[1]);
+                  return (
+                    <tr key={m.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                      <td className="p-4">
+                        <div className="flex items-center gap-2">
+                          <div className="flex -space-x-2">
+                            <img src={user1?.images?.[0] || `https://picsum.photos/seed/${m.users[0]}/50/50`} className="w-8 h-8 rounded-full border-2 border-white object-cover" alt="" />
+                            <img src={user2?.images?.[0] || `https://picsum.photos/seed/${m.users[1]}/50/50`} className="w-8 h-8 rounded-full border-2 border-white object-cover" alt="" />
+                          </div>
+                          <div className="text-xs font-bold truncate max-w-[150px]">
+                            {user1?.name || 'User'} & {user2?.name || 'User'}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-4 text-xs text-slate-500">
+                        {m.timestamp?.toDate ? m.timestamp.toDate().toLocaleString() : 'Recently'}
+                      </td>
+                      <td className="p-4 text-right">
+                        <button 
+                          onClick={() => deleteMatch(m.id)}
+                          className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
+                          title="Delete Match"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {matches.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="p-10 text-center text-slate-400 italic">No recent matches found.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -1187,18 +1377,38 @@ const AdminDashboard = () => {
                 </tr>
               </thead>
               <tbody>
-                {users.filter(u => !u.isVerified).slice(0, 3).map(u => (
-                  <tr key={u.id} className="border-b border-slate-50">
+                {users.filter(u => !u.isVerified).slice(0, 5).map(u => (
+                  <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
                     <td className="p-4 flex items-center gap-3">
                       <img src={u.images?.[0]} className="w-8 h-8 rounded-full object-cover" alt="" />
                       <span className="text-sm font-bold">{u.name}</span>
                     </td>
-                    <td className="p-4 text-xs text-slate-500">Today</td>
+                    <td className="p-4 text-xs text-slate-500">
+                      {u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : 'Today'}
+                    </td>
                     <td className="p-4 text-right">
-                      <button className="px-3 py-1 bg-primary text-white rounded-lg text-[10px] font-bold uppercase">Review</button>
+                      <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => setEditingUser(u)}
+                          className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200"
+                        >
+                          Review
+                        </button>
+                        <button 
+                          onClick={() => verifyUser(u.id)}
+                          className="px-3 py-1 bg-primary text-white rounded-lg text-[10px] font-bold uppercase hover:bg-primary/90"
+                        >
+                          Verify
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
+                {users.filter(u => !u.isVerified).length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="p-10 text-center text-slate-400 italic">No verification requests found.</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -1210,14 +1420,26 @@ const AdminDashboard = () => {
           <CreditCard size={48} className="mx-auto mb-4 text-primary opacity-20" />
           <h3 className="text-xl font-bold mb-2">Subscription & Payment Control</h3>
           <p className="text-slate-500 max-w-md mx-auto">Manage user subscriptions, process refunds, and monitor revenue.</p>
-          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <div className="p-6 bg-green-50 rounded-2xl border border-green-100 text-left">
               <div className="text-xs font-bold text-green-600 uppercase mb-1">Total Revenue (MTD)</div>
               <div className="text-2xl font-bold text-green-800">R45,200</div>
             </div>
             <div className="p-6 bg-blue-50 rounded-2xl border border-blue-100 text-left">
               <div className="text-xs font-bold text-blue-600 uppercase mb-1">Active Subscriptions</div>
-              <div className="text-2xl font-bold text-blue-800">124</div>
+              <div className="text-2xl font-bold text-blue-800">{users.filter(u => u.isPremium).length}</div>
+            </div>
+          </div>
+          <div className="max-w-md mx-auto p-6 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 ml-1">Monthly Subscription Price (ZAR)</label>
+            <div className="flex gap-3">
+              <input 
+                type="number"
+                value={appSettings.subscriptionPrice}
+                onChange={(e) => updateGlobalSettings({ subscriptionPrice: Number(e.target.value) })}
+                className="flex-1 px-4 py-2 rounded-xl border border-slate-200 bg-white focus:border-primary outline-none text-sm font-bold"
+              />
+              <button className="px-6 py-2 bg-primary text-white rounded-xl text-xs font-bold uppercase">Update Price</button>
             </div>
           </div>
         </div>
@@ -1230,8 +1452,33 @@ const AdminDashboard = () => {
           <p className="text-slate-500 max-w-md mx-auto">Send system-wide push notifications and manage automated alerts.</p>
           <div className="mt-8 max-w-md mx-auto text-left">
             <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 ml-1">Push Message</label>
-            <textarea className="w-full px-4 py-3 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all resize-none text-sm mb-4" rows={3} placeholder="Enter message to send to all users..." />
-            <button className="w-full btn-primary py-3 text-sm">Send Notification</button>
+            <textarea 
+              value={broadcastMessage}
+              onChange={(e) => setBroadcastMessage(e.target.value)}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all resize-none text-sm mb-4" 
+              rows={3} 
+              placeholder="Enter message to send to all users..." 
+            />
+            <div className="flex gap-2">
+              <button 
+                onClick={handleBroadcast}
+                disabled={isBroadcasting}
+                className="flex-1 btn-primary py-3 text-sm"
+              >
+                {isBroadcasting ? "Sending..." : "Update Broadcast"}
+              </button>
+              <button 
+                onClick={() => {
+                  setBroadcastMessage('');
+                  updateGlobalSettings({ broadcastMessage: '' });
+                  alert("Broadcast message cleared!");
+                }}
+                disabled={isBroadcasting}
+                className="px-6 py-3 bg-slate-100 text-slate-600 rounded-2xl text-sm font-bold hover:bg-slate-200 transition-all"
+              >
+                Clear
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1242,13 +1489,19 @@ const AdminDashboard = () => {
           <h3 className="text-xl font-bold mb-2">Content Management</h3>
           <p className="text-slate-500 max-w-md mx-auto">Manage static pages, blog posts, and application copy.</p>
           <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button className="p-4 border rounded-2xl text-left hover:bg-slate-50 transition-all">
+            <button 
+              onClick={() => setEditingContent({ type: 'terms', value: appSettings.termsOfService || '' })}
+              className="p-4 border rounded-2xl text-left hover:bg-slate-50 transition-all"
+            >
               <div className="font-bold text-sm">Terms of Service</div>
-              <div className="text-xs text-slate-400">Last updated 2 days ago</div>
+              <div className="text-xs text-slate-400">Manage the app's legal terms</div>
             </button>
-            <button className="p-4 border rounded-2xl text-left hover:bg-slate-50 transition-all">
+            <button 
+              onClick={() => setEditingContent({ type: 'privacy', value: appSettings.privacyPolicy || '' })}
+              className="p-4 border rounded-2xl text-left hover:bg-slate-50 transition-all"
+            >
               <div className="font-bold text-sm">Privacy Policy</div>
-              <div className="text-xs text-slate-400">Last updated 1 month ago</div>
+              <div className="text-xs text-slate-400">Manage the app's privacy policy</div>
             </button>
           </div>
         </div>
@@ -1287,45 +1540,137 @@ const AdminDashboard = () => {
           <MapPin size={48} className="mx-auto mb-4 text-primary opacity-20" />
           <h3 className="text-xl font-bold mb-2">Location & Preference Control</h3>
           <p className="text-slate-500 max-w-md mx-auto">Manage global location settings, distance algorithms, and matching preferences.</p>
-          <div className="mt-8 max-w-md mx-auto space-y-4 text-left">
-            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
-              <span className="text-sm font-bold">Global Distance Limit</span>
-              <span className="text-sm text-primary font-bold">100km</span>
+          <div className="mt-8 max-w-md mx-auto space-y-6 text-left">
+            <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 ml-1">Global Distance Limit (km)</label>
+              <input 
+                type="number"
+                value={appSettings.globalDistanceLimit}
+                onChange={(e) => updateGlobalSettings({ globalDistanceLimit: Number(e.target.value) })}
+                className="w-full px-4 py-2 rounded-xl border border-slate-200 bg-white focus:border-primary outline-none text-sm font-bold"
+              />
             </div>
-            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
-              <span className="text-sm font-bold">Age Range Buffer</span>
-              <span className="text-sm text-primary font-bold">+/- 5 years</span>
+            <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 ml-1">Age Range Buffer (years)</label>
+              <input 
+                type="number"
+                value={appSettings.ageRangeBuffer}
+                onChange={(e) => updateGlobalSettings({ ageRangeBuffer: Number(e.target.value) })}
+                className="w-full px-4 py-2 rounded-xl border border-slate-200 bg-white focus:border-primary outline-none text-sm font-bold"
+              />
             </div>
           </div>
         </div>
       )}
 
       {activeSubTab === 'security' && (
-        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
-          <Lock size={48} className="mx-auto mb-4 text-primary opacity-20" />
-          <h3 className="text-xl font-bold mb-2">Security & Access Control</h3>
-          <p className="text-slate-500 max-w-md mx-auto">Monitor login attempts, manage IP whitelists, and review security logs.</p>
-          <div className="mt-8 p-6 bg-red-50 rounded-2xl border border-red-100 text-left">
-            <div className="text-xs font-bold text-red-600 uppercase mb-2">Recent Security Alerts</div>
-            <div className="text-xs text-red-800">No suspicious activity detected in the last 24 hours.</div>
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-bold flex items-center gap-2">
+              <Lock size={20} className="text-primary" />
+              Security & Access Control
+            </h3>
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recent Activity Logs</div>
+          </div>
+          
+          <div className="space-y-3">
+            {securityLogs.map(log => (
+              <div key={log.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={cn(
+                    "w-8 h-8 rounded-full flex items-center justify-center",
+                    log.type === 'login_fail' ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"
+                  )}>
+                    {log.type === 'login_fail' ? <ShieldAlert size={14} /> : <LogIn size={14} />}
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold">{log.message}</div>
+                    <div className="text-[10px] text-slate-400">{log.ip} • {log.timestamp?.toDate ? log.timestamp.toDate().toLocaleString() : 'Recently'}</div>
+                  </div>
+                </div>
+                <button className="text-[10px] font-bold text-red-600 uppercase tracking-wider hover:underline">Block IP</button>
+              </div>
+            ))}
+            {securityLogs.length === 0 && (
+              <div className="p-10 text-center text-slate-400 italic bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                No security alerts or logs found.
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {activeSubTab === 'support' && (
-        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
-          <LifeBuoy size={48} className="mx-auto mb-4 text-primary opacity-20" />
-          <h3 className="text-xl font-bold mb-2">Support Management</h3>
-          <p className="text-slate-500 max-w-md mx-auto">Manage customer support tickets and help center content.</p>
-          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
-            <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
-              <div className="text-xs font-bold text-slate-400 uppercase mb-1">Open Tickets</div>
-              <div className="text-2xl font-bold">12</div>
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-bold flex items-center gap-2">
+              <LifeBuoy size={20} className="text-primary" />
+              Support Management
+            </h3>
+            <div className="flex gap-4">
+              <div className="text-center">
+                <div className="text-[10px] font-bold text-slate-400 uppercase">Open</div>
+                <div className="text-lg font-bold">{supportTickets.filter(t => t.status === 'open').length}</div>
+              </div>
+              <div className="text-center border-l pl-4">
+                <div className="text-[10px] font-bold text-slate-400 uppercase">Resolved</div>
+                <div className="text-lg font-bold">{supportTickets.filter(t => t.status === 'resolved').length}</div>
+              </div>
             </div>
-            <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
-              <div className="text-xs font-bold text-slate-400 uppercase mb-1">Avg Response Time</div>
-              <div className="text-2xl font-bold">2.4h</div>
-            </div>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">User</th>
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Subject</th>
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {supportTickets.map(t => (
+                  <tr key={t.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                    <td className="p-4">
+                      <div className="font-bold text-sm">{t.userName}</div>
+                      <div className="text-[10px] text-slate-400">{t.userId}</div>
+                    </td>
+                    <td className="p-4">
+                      <div className="text-sm font-medium">{t.subject}</div>
+                      <div className="text-xs text-slate-500 truncate max-w-xs">{t.message}</div>
+                    </td>
+                    <td className="p-4">
+                      <select 
+                        value={t.status}
+                        onChange={(e) => updateTicketStatus(t.id, e.target.value)}
+                        className={cn(
+                          "text-[10px] font-bold uppercase px-2 py-1 rounded-full outline-none border-none cursor-pointer",
+                          t.status === 'open' ? "bg-red-100 text-red-600" : 
+                          t.status === 'in-progress' ? "bg-amber-100 text-amber-600" : 
+                          "bg-green-100 text-green-600"
+                        )}
+                      >
+                        <option value="open">Open</option>
+                        <option value="in-progress">In Progress</option>
+                        <option value="resolved">Resolved</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                    </td>
+                    <td className="p-4 text-right">
+                      <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 transition-all">
+                        <MessageSquare size={18} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {supportTickets.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="p-10 text-center text-slate-400 italic">No support tickets found.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -1486,6 +1831,17 @@ const AdminDashboard = () => {
             onConfirm={() => deleteUser(confirmDelete)}
             onCancel={() => setConfirmDelete(null)}
             confirmText="Delete Permanently"
+          />
+        )}
+        {editingContent && (
+          <ContentEditModal 
+            type={editingContent.type}
+            initialValue={editingContent.value}
+            onClose={() => setEditingContent(null)}
+            onSave={(newValue: string) => {
+              updateGlobalSettings({ [editingContent.type === 'terms' ? 'termsOfService' : 'privacyPolicy']: newValue });
+              setEditingContent(null);
+            }}
           />
         )}
       </AnimatePresence>
@@ -2386,6 +2742,7 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
   const [matches, setMatches] = useState<any[]>([]);
+  const [generatingIcebreaker, setGeneratingIcebreaker] = useState(false);
   const { user } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -2516,6 +2873,20 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `chats/${chatId}/messages`);
     }
+  };
+
+  const handleIcebreaker = async () => {
+    if (!selectedMatch || !profile) return;
+    setGeneratingIcebreaker(true);
+    const icebreaker = await generateIcebreakerWithAI(
+      selectedMatch.otherUser.name, 
+      selectedMatch.otherUser.interests || [], 
+      profile.name
+    );
+    if (icebreaker) {
+      setMessage(icebreaker);
+    }
+    setGeneratingIcebreaker(false);
   };
 
   const deleteMatch = async (matchId: string) => {
@@ -2670,7 +3041,16 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
               )}
             </div>
 
-            <form onSubmit={sendMessage} className="p-4 border-t border-inherit flex gap-3">
+            <form onSubmit={sendMessage} className="p-4 border-t border-inherit flex gap-3 items-center">
+              <button 
+                type="button"
+                onClick={handleIcebreaker}
+                disabled={generatingIcebreaker}
+                className="p-2.5 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                title="AI Icebreaker"
+              >
+                <Sparkles size={20} className={generatingIcebreaker ? "animate-pulse" : ""} />
+              </button>
               <input 
                 ref={inputRef}
                 type="text" 
@@ -2680,7 +3060,7 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
                 className="flex-1 px-6 py-3 rounded-full outline-none text-sm transition-all bg-slate-100 border-transparent focus:bg-white focus:border-primary/20"
               />
               <button type="submit" className="w-12 h-12 rounded-full bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/20 hover:scale-105 transition-all">
-                <Zap size={20} className="fill-current" />
+                <Send size={20} className="fill-current" />
               </button>
             </form>
           </>
@@ -3495,6 +3875,25 @@ const ProfileView = () => {
         </div>
 
         <div className="pt-20 px-8 pb-8">
+          <div className="mb-8 p-6 rounded-3xl bg-slate-50 border border-slate-100">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-bold text-slate-700">Profile Completeness</h4>
+              <span className="text-sm font-bold text-primary">{calculateCompleteness(profile)}%</span>
+            </div>
+            <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+              <motion.div 
+                initial={{ width: 0 }}
+                animate={{ width: `${calculateCompleteness(profile)}%` }}
+                className="h-full bg-gradient-to-r from-primary to-secondary"
+              />
+            </div>
+            {calculateCompleteness(profile) < 100 && (
+              <p className="text-[10px] text-slate-500 mt-2 italic">
+                Complete your profile to get more matches!
+              </p>
+            )}
+          </div>
+
           <div className="flex items-center justify-between mb-6">
             <div>
               <h2 className="text-3xl font-bold">{profile.name}, {profile.age}</h2>
@@ -3999,6 +4398,112 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
   );
 };
 
+const FilterModal = ({ isOpen, onClose, filters, setFilters, interests }: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  filters: any, 
+  setFilters: (f: any) => void,
+  interests: string[]
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        className="bg-white w-full max-w-md rounded-[40px] shadow-2xl overflow-hidden"
+      >
+        <div className="p-8 border-b flex items-center justify-between">
+          <h3 className="text-2xl font-bold">Filters</h3>
+          <button onClick={onClose} className="p-2 hover:bg-black/5 rounded-full transition-colors">
+            <X size={24} />
+          </button>
+        </div>
+        
+        <div className="p-8 space-y-8 max-h-[60vh] overflow-y-auto no-scrollbar">
+          {/* Age Range */}
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4 block">Age Range</label>
+            <div className="flex items-center gap-4">
+              <input 
+                type="number" 
+                value={filters.ageRange[0]} 
+                onChange={(e) => setFilters({...filters, ageRange: [parseInt(e.target.value), filters.ageRange[1]]})}
+                className="w-full p-3 rounded-xl bg-slate-50 border-none text-sm font-bold focus:ring-2 ring-primary/20"
+              />
+              <span className="text-slate-400 font-bold">to</span>
+              <input 
+                type="number" 
+                value={filters.ageRange[1]} 
+                onChange={(e) => setFilters({...filters, ageRange: [filters.ageRange[0], parseInt(e.target.value)]})}
+                className="w-full p-3 rounded-xl bg-slate-50 border-none text-sm font-bold focus:ring-2 ring-primary/20"
+              />
+            </div>
+          </div>
+
+          {/* Distance */}
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4 block">Max Distance ({filters.maxDistance}km)</label>
+            <input 
+              type="range" 
+              min="1" 
+              max="500" 
+              value={filters.maxDistance} 
+              onChange={(e) => setFilters({...filters, maxDistance: parseInt(e.target.value)})}
+              className="w-full accent-primary"
+            />
+          </div>
+
+          {/* Interests */}
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4 block">Interests</label>
+            <div className="flex flex-wrap gap-2">
+              {interests.map(interest => {
+                const isSelected = filters.interests.includes(interest);
+                return (
+                  <button
+                    key={interest}
+                    onClick={() => {
+                      if (isSelected) {
+                        setFilters({...filters, interests: filters.interests.filter((i: string) => i !== interest)});
+                      } else {
+                        setFilters({...filters, interests: [...filters.interests, interest]});
+                      }
+                    }}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-xs font-bold transition-all border",
+                      isSelected 
+                        ? "bg-primary border-primary text-white" 
+                        : "bg-slate-50 border-slate-100 text-slate-600 hover:bg-slate-100"
+                    )}
+                  >
+                    {interest}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="p-8 bg-slate-50 border-t">
+          <button 
+            onClick={onClose}
+            className="w-full btn-primary py-4 font-bold shadow-lg shadow-primary/20"
+          >
+            Apply Filters
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -4020,6 +4525,13 @@ function AppContent() {
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [reportingUser, setReportingUser] = useState<UserType | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({
+    ageRange: [18, 100],
+    maxDistance: 100,
+    interests: [] as string[],
+    showTopPicks: false
+  });
   const [appSettings, setAppSettings] = useState<any>({
     maintenanceMode: false,
     registrationEnabled: true,
@@ -4027,6 +4539,23 @@ function AppContent() {
   });
   const { user, profile, loading, isSigningIn, signInError, signIn, logout } = useAuth();
   const isAdminUser = profile?.role === 'admin' || user?.email === 'siphes9812@gmail.com';
+
+  if (appSettings.maintenanceMode && !isAdminUser && !loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6 text-center">
+        <div className="max-w-md">
+          <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 mx-auto mb-6">
+            <Settings size={40} className="animate-spin-slow" />
+          </div>
+          <h1 className="text-3xl font-bold mb-4">Under Maintenance</h1>
+          <p className="text-slate-600 mb-8">{appSettings.broadcastMessage || "We're currently performing some scheduled maintenance. We'll be back shortly!"}</p>
+          <div className="p-4 bg-white rounded-2xl border border-black/5 shadow-sm text-xs text-slate-400">
+            Estimated completion: Within 2 hours
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     if (user?.email === 'siphes9812@gmail.com' && profile) {
@@ -4127,26 +4656,26 @@ function AppContent() {
           // Advanced Filtering
           
           // 1. Age Preference
-          const minAge = profile.preferredAgeMin || 18;
-          const maxAge = profile.preferredAgeMax || 100;
+          const minAge = filters.ageRange[0];
+          const maxAge = filters.ageRange[1];
           if (p.age < minAge || p.age > maxAge) return false;
 
           // 2. Distance Preference
-          const maxDist = profile.preferredDistance || 50; // Default 50km
+          const maxDist = filters.maxDistance;
           if (profile.latitude && profile.longitude && p.latitude && p.longitude) {
             const dist = calculateDistance(profile.latitude, profile.longitude, p.latitude, p.longitude);
             if (dist > maxDist) return false;
           }
 
-          // 3. Education Preference
-          if (profile.preferredEducation && profile.preferredEducation.length > 0) {
-            if (!p.education || !profile.preferredEducation.includes(p.education)) return false;
+          // 3. Interests Filter
+          if (filters.interests.length > 0) {
+            const hasCommonInterest = filters.interests.some(i => p.interests?.includes(i));
+            if (!hasCommonInterest) return false;
           }
 
-          // 4. Interest Matching (at least 1 common interest if user has interests)
-          if (profile.interests && profile.interests.length > 0 && p.interests && p.interests.length > 0) {
-            const commonInterests = profile.interests.filter(interest => p.interests.includes(interest));
-            if (commonInterests.length === 0) return false;
+          // 4. Education Preference
+          if (profile.preferredEducation && profile.preferredEducation.length > 0) {
+            if (!p.education || !profile.preferredEducation.includes(p.education)) return false;
           }
 
           return true;
@@ -4166,7 +4695,7 @@ function AppContent() {
     });
 
     return () => unsubscribe();
-  }, [user, profile]);
+  }, [user, profile, filters]);
 
   useEffect(() => {
     if (!user) {
@@ -4195,6 +4724,8 @@ function AppContent() {
     if (user && !profile && !loading) {
       if (!appSettings.registrationEnabled && !profile) {
         // Registration is disabled
+        alert("New registrations are currently disabled by the administrator. Please try again later.");
+        logout();
         return;
       }
       setShowSignup(true);
@@ -4351,6 +4882,12 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors duration-300">
+      {appSettings.broadcastMessage && appSettings.broadcastMessage.trim() !== '' && !appSettings.maintenanceMode && (
+        <div className="bg-primary text-white py-2 px-6 text-center text-[10px] font-bold flex items-center justify-center gap-2 relative z-[100] uppercase tracking-widest">
+          <Bell size={12} />
+          {appSettings.broadcastMessage}
+        </div>
+      )}
       <Navbar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
@@ -4384,7 +4921,11 @@ function AppContent() {
                   <p className="text-slate-500 text-sm">Swipe right to like, left to pass</p>
                 </div>
                 <div className="flex gap-3">
-                  <button className="px-5 py-1.5 rounded-full border border-black/10 hover:bg-black/5 font-medium transition-all text-xs">
+                  <button 
+                    onClick={() => setShowFilters(true)}
+                    className="px-5 py-1.5 rounded-full border border-black/10 hover:bg-black/5 font-medium transition-all text-xs flex items-center gap-2"
+                  >
+                    <Filter size={14} />
                     Filters
                   </button>
                   <button className="btn-gold py-1.5 px-5 text-xs">
@@ -4392,6 +4933,32 @@ function AppContent() {
                   </button>
                 </div>
               </div>
+
+              {/* Top Picks Section */}
+              {profiles.length > 0 && (
+                <div className="mb-12">
+                  <div className="flex items-center gap-2 mb-6">
+                    <Sparkles className="text-amber-500" size={20} />
+                    <h3 className="text-lg font-bold">Top Picks for You</h3>
+                  </div>
+                  <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar">
+                    {profiles.slice(0, 5).map(p => (
+                      <div key={`top-${p.id}`} className="min-w-[200px] md:min-w-[240px]">
+                        <ProfileCard 
+                          user={p} 
+                          currentUserProfile={profile}
+                          onLike={() => handleLike(p)} 
+                          onPass={() => handlePass(p)}
+                          onMessage={() => handleMessage(p)}
+                          onReport={() => setReportingUser(p)}
+                          onClick={() => setSelectedProfile(p)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
                 {profiles.map(p => (
                   <ProfileCard 
@@ -4503,6 +5070,19 @@ function AppContent() {
           <ReportModal 
             reportedUser={reportingUser} 
             onClose={() => setReportingUser(null)} 
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Filter Modal */}
+      <AnimatePresence>
+        {showFilters && (
+          <FilterModal 
+            isOpen={showFilters} 
+            onClose={() => setShowFilters(false)} 
+            filters={filters} 
+            setFilters={setFilters} 
+            interests={["Music", "Travel", "Food", "Art", "Sports", "Gaming", "Movies", "Reading", "Dancing", "Cooking", "Photography", "Fitness", "Nature", "Technology", "Fashion"]}
           />
         )}
       </AnimatePresence>

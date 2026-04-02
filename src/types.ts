@@ -68,3 +68,26 @@ export interface Message {
   timestamp: any;
 }
 
+export interface SupportTicket {
+  id: string;
+  userId: string;
+  userName: string;
+  subject: string;
+  message: string;
+  status: 'open' | 'in-progress' | 'resolved' | 'closed';
+  createdAt: any;
+  updatedAt: any;
+}
+
+export interface AppSettings {
+  maintenanceMode: boolean;
+  registrationEnabled: boolean;
+  premiumOnly: boolean;
+  broadcastMessage: string;
+  termsOfService: string;
+  privacyPolicy: string;
+  globalDistanceLimit: number;
+  ageRangeBuffer: number;
+  subscriptionPrice: number;
+}
+

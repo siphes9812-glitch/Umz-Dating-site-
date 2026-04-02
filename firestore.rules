@@ -137,28 +137,40 @@ service cloud.firestore {
     }
 
     match /matches/{matchId} {
-      allow read: if isNotRestricted() && request.auth.uid in resource.data.users;
+      allow read: if isAdmin() || (isNotRestricted() && request.auth.uid in resource.data.users);
       allow create: if isNotRestricted() && isValidMatch(request.resource.data);
-      allow update: if isNotRestricted() && request.auth.uid in resource.data.users;
-      allow delete: if isNotRestricted() && request.auth.uid in resource.data.users;
+      allow update: if isAdmin() || (isNotRestricted() && request.auth.uid in resource.data.users);
+      allow delete: if isAdmin() || (isNotRestricted() && request.auth.uid in resource.data.users);
     }
 
     match /chats/{chatId}/messages/{messageId} {
-      allow read: if isNotRestricted() && (
+      allow read: if isAdmin() || (isNotRestricted() && (
         chatId.split('_').hasAny([request.auth.uid])
-      );
+      ));
       allow create: if isNotRestricted() && isValidMessage(request.resource.data) && (
         chatId.split('_').hasAny([request.auth.uid])
       );
-      allow delete: if isNotRestricted() && resource.data.senderId == request.auth.uid;
+      allow delete: if isAdmin() || (isNotRestricted() && resource.data.senderId == request.auth.uid);
     }
 
     match /notifications/{notificationId} {
-      allow read: if isNotRestricted() && isOwner(resource.data.userId);
+      allow read: if isAdmin() || (isNotRestricted() && isOwner(resource.data.userId));
       allow create: if isNotRestricted() && isValidNotification(request.resource.data);
-      allow update: if isNotRestricted() && isOwner(resource.data.userId) && 
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
-      allow delete: if isNotRestricted() && isOwner(resource.data.userId);
+      allow update: if isAdmin() || (isNotRestricted() && isOwner(resource.data.userId) && 
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']));
+      allow delete: if isAdmin() || (isNotRestricted() && isOwner(resource.data.userId));
+    }
+
+    match /support_tickets/{ticketId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
+
+    match /security_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if true; // System logs
+      allow update, delete: if isAdmin();
     }
 
     match /reports/{reportId} {
