@@ -1,8 +1,19 @@
 export interface AdminRights {
-  canBan: boolean;
-  canDelete: boolean;
-  canManageAdmins: boolean;
+  canManageUsers: boolean;
+  canDeleteUsers: boolean;
+  canModerateProfiles: boolean;
+  canMonitorInteractions: boolean;
+  canHandleReports: boolean;
+  canManageVerification: boolean;
+  canControlPayments: boolean;
+  canManageNotifications: boolean;
+  canManageContent: boolean;
+  canViewAnalytics: boolean;
+  canControlLocationPreferences: boolean;
+  canManageSecurity: boolean;
+  canManageSupport: boolean;
   canEditSettings: boolean;
+  canManageAdmins: boolean;
 }
 
 export interface User {

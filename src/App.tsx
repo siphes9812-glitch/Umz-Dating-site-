@@ -32,7 +32,12 @@ import {
   Image as ImageIcon,
   ChevronLeft,
   MapPin,
-  Sparkles
+  Sparkles,
+  MessageSquare,
+  CreditCard,
+  Layout,
+  BarChart3,
+  LifeBuoy
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { User as UserType } from './types';
@@ -551,10 +556,21 @@ const UserEditModal = ({
     isPremium: user.isPremium || false,
     isVerified: user.isVerified || false,
     adminRights: user.adminRights || {
-      canBan: false,
-      canDelete: false,
-      canManageAdmins: false,
-      canEditSettings: false
+      canManageUsers: false,
+      canDeleteUsers: false,
+      canModerateProfiles: false,
+      canMonitorInteractions: false,
+      canHandleReports: false,
+      canManageVerification: false,
+      canControlPayments: false,
+      canManageNotifications: false,
+      canManageContent: false,
+      canViewAnalytics: false,
+      canControlLocationPreferences: false,
+      canManageSecurity: false,
+      canManageSupport: false,
+      canEditSettings: false,
+      canManageAdmins: false
     }
   });
   const [saving, setSaving] = useState(false);
@@ -626,54 +642,36 @@ const UserEditModal = ({
             <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 space-y-3">
               <label className="block text-[10px] font-bold uppercase tracking-widest text-amber-600 mb-1 ml-1">Admin Permissions</label>
               <div className="grid grid-cols-2 gap-3">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    checked={formData.adminRights.canBan}
-                    onChange={e => setFormData(prev => ({ 
-                      ...prev, 
-                      adminRights: { ...prev.adminRights, canBan: e.target.checked } 
-                    }))}
-                    className="w-4 h-4 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
-                  />
-                  <span className="text-[10px] font-bold text-amber-800">Can Ban</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    checked={formData.adminRights.canDelete}
-                    onChange={e => setFormData(prev => ({ 
-                      ...prev, 
-                      adminRights: { ...prev.adminRights, canDelete: e.target.checked } 
-                    }))}
-                    className="w-4 h-4 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
-                  />
-                  <span className="text-[10px] font-bold text-amber-800">Can Delete</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    checked={formData.adminRights.canManageAdmins}
-                    onChange={e => setFormData(prev => ({ 
-                      ...prev, 
-                      adminRights: { ...prev.adminRights, canManageAdmins: e.target.checked } 
-                    }))}
-                    className="w-4 h-4 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
-                  />
-                  <span className="text-[10px] font-bold text-amber-800">Can Manage Admins</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    checked={formData.adminRights.canEditSettings}
-                    onChange={e => setFormData(prev => ({ 
-                      ...prev, 
-                      adminRights: { ...prev.adminRights, canEditSettings: e.target.checked } 
-                    }))}
-                    className="w-4 h-4 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
-                  />
-                  <span className="text-[10px] font-bold text-amber-800">Can Edit Settings</span>
-                </label>
+                {[
+                  { key: 'canManageUsers', label: 'User Management' },
+                  { key: 'canDeleteUsers', label: 'Delete Users' },
+                  { key: 'canModerateProfiles', label: 'Profile Moderation' },
+                  { key: 'canMonitorInteractions', label: 'Interaction Monitoring' },
+                  { key: 'canHandleReports', label: 'Report Handling' },
+                  { key: 'canManageVerification', label: 'Verification Mgmt' },
+                  { key: 'canControlPayments', label: 'Payment Control' },
+                  { key: 'canManageNotifications', label: 'Notification Mgmt' },
+                  { key: 'canManageContent', label: 'Content Mgmt' },
+                  { key: 'canViewAnalytics', label: 'View Analytics' },
+                  { key: 'canControlLocationPreferences', label: 'Location Control' },
+                  { key: 'canManageSecurity', label: 'Security Control' },
+                  { key: 'canManageSupport', label: 'Support Mgmt' },
+                  { key: 'canEditSettings', label: 'System Settings' },
+                  { key: 'canManageAdmins', label: 'Manage Admins' },
+                ].map((permission) => (
+                  <label key={permission.key} className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={(formData.adminRights as any)[permission.key]}
+                      onChange={e => setFormData(prev => ({ 
+                        ...prev, 
+                        adminRights: { ...prev.adminRights, [permission.key]: e.target.checked } 
+                      }))}
+                      className="w-4 h-4 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="text-[10px] font-bold text-amber-800">{permission.label}</span>
+                  </label>
+                ))}
               </div>
             </div>
           )}
@@ -736,7 +734,11 @@ const AdminDashboard = () => {
   const [users, setUsers] = useState<UserType[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeSubTab, setActiveSubTab] = useState<'users' | 'reports' | 'settings'>('users');
+  const [activeSubTab, setActiveSubTab] = useState<
+    'users' | 'moderation' | 'interactions' | 'reports' | 'verification' | 
+    'payments' | 'notifications' | 'content' | 'analytics' | 'location' | 
+    'security' | 'support' | 'settings'
+  >('users');
   const [editingUser, setEditingUser] = useState<UserType | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [showCreateAdmin, setShowCreateAdmin] = useState(false);
@@ -784,8 +786,8 @@ const AdminDashboard = () => {
       alert("Cannot ban another administrator.");
       return;
     }
-    if (!currentAdminProfile?.adminRights?.canBan) {
-      alert("You do not have permission to ban users.");
+    if (!currentAdminProfile?.adminRights?.canManageUsers) {
+      alert("You do not have permission to manage users.");
       return;
     }
     try {
@@ -844,7 +846,7 @@ const AdminDashboard = () => {
       alert("Cannot delete another administrator.");
       return;
     }
-    if (!currentAdminProfile?.adminRights?.canDelete) {
+    if (!currentAdminProfile?.adminRights?.canDeleteUsers) {
       alert("You do not have permission to delete users.");
       return;
     }
@@ -858,6 +860,10 @@ const AdminDashboard = () => {
 
   const handleSaveUser = async (updatedData: Partial<UserType>) => {
     if (!editingUser) return;
+    if (editingUser.role !== 'admin' && !currentAdminProfile?.adminRights?.canManageUsers) {
+      alert("You do not have permission to manage users.");
+      return;
+    }
     if (editingUser.role === 'admin' && updatedData.adminRights && !currentAdminProfile?.adminRights?.canManageAdmins) {
       alert("You do not have permission to manage administrator rights.");
       return;
@@ -917,34 +923,35 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      <div className="flex gap-4 mb-8">
-        <button 
-          onClick={() => setActiveSubTab('users')}
-          className={cn(
-            "px-6 py-2 rounded-full font-bold text-sm transition-all",
-            activeSubTab === 'users' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-white text-slate-500 hover:bg-slate-50"
-          )}
-        >
-          User Management
-        </button>
-        <button 
-          onClick={() => setActiveSubTab('reports')}
-          className={cn(
-            "px-6 py-2 rounded-full font-bold text-sm transition-all",
-            activeSubTab === 'reports' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-white text-slate-500 hover:bg-slate-50"
-          )}
-        >
-          Reports ({reports.filter(r => r.status === 'pending').length})
-        </button>
-        <button 
-          onClick={() => setActiveSubTab('settings')}
-          className={cn(
-            "px-6 py-2 rounded-full font-bold text-sm transition-all",
-            activeSubTab === 'settings' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-white text-slate-500 hover:bg-slate-50"
-          )}
-        >
-          App Settings
-        </button>
+      <div className="flex flex-wrap gap-2 mb-8">
+        {[
+          { id: 'users', label: 'User Management', permission: 'canManageUsers' },
+          { id: 'moderation', label: 'Profile Moderation', permission: 'canModerateProfiles' },
+          { id: 'interactions', label: 'Interactions', permission: 'canMonitorInteractions' },
+          { id: 'reports', label: `Reports (${reports.filter(r => r.status === 'pending').length})`, permission: 'canHandleReports' },
+          { id: 'verification', label: 'Verification', permission: 'canManageVerification' },
+          { id: 'payments', label: 'Payments', permission: 'canControlPayments' },
+          { id: 'notifications', label: 'Notifications', permission: 'canManageNotifications' },
+          { id: 'content', label: 'Content', permission: 'canManageContent' },
+          { id: 'analytics', label: 'Analytics', permission: 'canViewAnalytics' },
+          { id: 'location', label: 'Location Control', permission: 'canControlLocationPreferences' },
+          { id: 'security', label: 'Security', permission: 'canManageSecurity' },
+          { id: 'support', label: 'Support', permission: 'canManageSupport' },
+          { id: 'settings', label: 'App Settings', permission: 'canEditSettings' },
+        ].map((tab) => (
+          (currentAdminProfile?.adminRights as any)?.[tab.permission] && (
+            <button 
+              key={tab.id}
+              onClick={() => setActiveSubTab(tab.id as any)}
+              className={cn(
+                "px-4 py-2 rounded-full font-bold text-xs transition-all",
+                activeSubTab === tab.id ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-white text-slate-500 hover:bg-slate-50 border border-black/5"
+              )}
+            >
+              {tab.label}
+            </button>
+          )
+        ))}
         {currentAdminProfile?.adminRights?.canManageAdmins && (
           <button 
             onClick={() => setShowCreateAdmin(true)}
@@ -1132,6 +1139,197 @@ const AdminDashboard = () => {
         </div>
       )}
 
+      {activeSubTab === 'moderation' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
+          <ShieldCheck size={48} className="mx-auto mb-4 text-primary opacity-20" />
+          <h3 className="text-xl font-bold mb-2">Profile Moderation</h3>
+          <p className="text-slate-500 max-w-md mx-auto">Review user profiles, photos, and bios for community guidelines compliance.</p>
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+            {users.filter(u => !u.isVerified).slice(0, 6).map(u => (
+              <div key={u.id} className="p-4 border rounded-2xl flex flex-col items-center">
+                <img src={u.images?.[0]} className="w-20 h-20 rounded-full object-cover mb-3" alt="" />
+                <div className="font-bold text-sm mb-1">{u.name}</div>
+                <button className="text-[10px] font-bold text-primary uppercase tracking-wider">Review Profile</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'interactions' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
+          <MessageSquare size={48} className="mx-auto mb-4 text-primary opacity-20" />
+          <h3 className="text-xl font-bold mb-2">Match & Interaction Monitoring</h3>
+          <p className="text-slate-500 max-w-md mx-auto">Monitor system-wide matches and message patterns to detect spam or harassment.</p>
+          <div className="mt-8 p-6 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+            <div className="text-xs font-bold text-slate-400 uppercase mb-4">Live Interaction Feed</div>
+            <div className="space-y-3">
+              <div className="text-xs text-slate-600">New match created between User A and User B</div>
+              <div className="text-xs text-slate-600">Message sent from User C to User D</div>
+              <div className="text-xs text-slate-600">User E liked User F</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'verification' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
+          <ShieldCheck size={48} className="mx-auto mb-4 text-primary opacity-20" />
+          <h3 className="text-xl font-bold mb-2">Verification Management</h3>
+          <p className="text-slate-500 max-w-md mx-auto">Review and approve user verification requests and ID documents.</p>
+          <div className="mt-8 overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">User</th>
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Request Date</th>
+                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.filter(u => !u.isVerified).slice(0, 3).map(u => (
+                  <tr key={u.id} className="border-b border-slate-50">
+                    <td className="p-4 flex items-center gap-3">
+                      <img src={u.images?.[0]} className="w-8 h-8 rounded-full object-cover" alt="" />
+                      <span className="text-sm font-bold">{u.name}</span>
+                    </td>
+                    <td className="p-4 text-xs text-slate-500">Today</td>
+                    <td className="p-4 text-right">
+                      <button className="px-3 py-1 bg-primary text-white rounded-lg text-[10px] font-bold uppercase">Review</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'payments' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
+          <CreditCard size={48} className="mx-auto mb-4 text-primary opacity-20" />
+          <h3 className="text-xl font-bold mb-2">Subscription & Payment Control</h3>
+          <p className="text-slate-500 max-w-md mx-auto">Manage user subscriptions, process refunds, and monitor revenue.</p>
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="p-6 bg-green-50 rounded-2xl border border-green-100 text-left">
+              <div className="text-xs font-bold text-green-600 uppercase mb-1">Total Revenue (MTD)</div>
+              <div className="text-2xl font-bold text-green-800">R45,200</div>
+            </div>
+            <div className="p-6 bg-blue-50 rounded-2xl border border-blue-100 text-left">
+              <div className="text-xs font-bold text-blue-600 uppercase mb-1">Active Subscriptions</div>
+              <div className="text-2xl font-bold text-blue-800">124</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'notifications' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
+          <Bell size={48} className="mx-auto mb-4 text-primary opacity-20" />
+          <h3 className="text-xl font-bold mb-2">Notification Management</h3>
+          <p className="text-slate-500 max-w-md mx-auto">Send system-wide push notifications and manage automated alerts.</p>
+          <div className="mt-8 max-w-md mx-auto text-left">
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 ml-1">Push Message</label>
+            <textarea className="w-full px-4 py-3 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all resize-none text-sm mb-4" rows={3} placeholder="Enter message to send to all users..." />
+            <button className="w-full btn-primary py-3 text-sm">Send Notification</button>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'content' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
+          <Layout size={48} className="mx-auto mb-4 text-primary opacity-20" />
+          <h3 className="text-xl font-bold mb-2">Content Management</h3>
+          <p className="text-slate-500 max-w-md mx-auto">Manage static pages, blog posts, and application copy.</p>
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button className="p-4 border rounded-2xl text-left hover:bg-slate-50 transition-all">
+              <div className="font-bold text-sm">Terms of Service</div>
+              <div className="text-xs text-slate-400">Last updated 2 days ago</div>
+            </button>
+            <button className="p-4 border rounded-2xl text-left hover:bg-slate-50 transition-all">
+              <div className="font-bold text-sm">Privacy Policy</div>
+              <div className="text-xs text-slate-400">Last updated 1 month ago</div>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'analytics' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+          <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
+            <BarChart3 size={20} className="text-primary" />
+            Analytics & Reports
+          </h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={[
+                { name: 'Mon', active: 400, new: 24 },
+                { name: 'Tue', active: 700, new: 32 },
+                { name: 'Wed', active: 500, new: 28 },
+                { name: 'Thu', active: 1200, new: 45 },
+                { name: 'Fri', active: 900, new: 38 },
+                { name: 'Sat', active: 1500, new: 62 },
+                { name: 'Sun', active: 1000, new: 50 },
+              ]}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} />
+                <YAxis axisLine={false} tickLine={false} />
+                <Tooltip />
+                <Area type="monotone" dataKey="active" stroke="#8B0000" fill="#8B0000" fillOpacity={0.1} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'location' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
+          <MapPin size={48} className="mx-auto mb-4 text-primary opacity-20" />
+          <h3 className="text-xl font-bold mb-2">Location & Preference Control</h3>
+          <p className="text-slate-500 max-w-md mx-auto">Manage global location settings, distance algorithms, and matching preferences.</p>
+          <div className="mt-8 max-w-md mx-auto space-y-4 text-left">
+            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
+              <span className="text-sm font-bold">Global Distance Limit</span>
+              <span className="text-sm text-primary font-bold">100km</span>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
+              <span className="text-sm font-bold">Age Range Buffer</span>
+              <span className="text-sm text-primary font-bold">+/- 5 years</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'security' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
+          <Lock size={48} className="mx-auto mb-4 text-primary opacity-20" />
+          <h3 className="text-xl font-bold mb-2">Security & Access Control</h3>
+          <p className="text-slate-500 max-w-md mx-auto">Monitor login attempts, manage IP whitelists, and review security logs.</p>
+          <div className="mt-8 p-6 bg-red-50 rounded-2xl border border-red-100 text-left">
+            <div className="text-xs font-bold text-red-600 uppercase mb-2">Recent Security Alerts</div>
+            <div className="text-xs text-red-800">No suspicious activity detected in the last 24 hours.</div>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'support' && (
+        <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm text-center">
+          <LifeBuoy size={48} className="mx-auto mb-4 text-primary opacity-20" />
+          <h3 className="text-xl font-bold mb-2">Support Management</h3>
+          <p className="text-slate-500 max-w-md mx-auto">Manage customer support tickets and help center content.</p>
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
+            <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="text-xs font-bold text-slate-400 uppercase mb-1">Open Tickets</div>
+              <div className="text-2xl font-bold">12</div>
+            </div>
+            <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="text-xs font-bold text-slate-400 uppercase mb-1">Avg Response Time</div>
+              <div className="text-2xl font-bold">2.4h</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeSubTab === 'settings' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
@@ -1306,10 +1504,21 @@ const CreateAdminModal = ({
 }) => {
   const [selectedUserId, setSelectedUserId] = useState('');
   const [rights, setRights] = useState({
-    canBan: false,
-    canDelete: false,
-    canManageAdmins: false,
-    canEditSettings: false
+    canManageUsers: false,
+    canDeleteUsers: false,
+    canModerateProfiles: false,
+    canMonitorInteractions: false,
+    canHandleReports: false,
+    canManageVerification: false,
+    canControlPayments: false,
+    canManageNotifications: false,
+    canManageContent: false,
+    canViewAnalytics: false,
+    canControlLocationPreferences: false,
+    canManageSecurity: false,
+    canManageSupport: false,
+    canEditSettings: false,
+    canManageAdmins: false
   });
   const [submitting, setSubmitting] = useState(false);
 
@@ -1353,43 +1562,34 @@ const CreateAdminModal = ({
 
           <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 space-y-4">
             <label className="block text-[10px] font-bold uppercase tracking-widest text-amber-600 ml-1">Assign Permissions</label>
-            <div className="grid grid-cols-2 gap-4">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={rights.canBan}
-                  onChange={e => setRights({ ...rights, canBan: e.target.checked })}
-                  className="w-5 h-5 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
-                />
-                <span className="text-xs font-bold text-amber-800">Can Ban</span>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={rights.canDelete}
-                  onChange={e => setRights({ ...rights, canDelete: e.target.checked })}
-                  className="w-5 h-5 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
-                />
-                <span className="text-xs font-bold text-amber-800">Can Delete</span>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={rights.canManageAdmins}
-                  onChange={e => setRights({ ...rights, canManageAdmins: e.target.checked })}
-                  className="w-5 h-5 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
-                />
-                <span className="text-xs font-bold text-amber-800">Manage Admins</span>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={rights.canEditSettings}
-                  onChange={e => setRights({ ...rights, canEditSettings: e.target.checked })}
-                  className="w-5 h-5 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
-                />
-                <span className="text-xs font-bold text-amber-800">Edit Settings</span>
-              </label>
+            <div className="grid grid-cols-2 gap-4 max-h-48 overflow-y-auto pr-2">
+              {[
+                { key: 'canManageUsers', label: 'User Management' },
+                { key: 'canDeleteUsers', label: 'Delete Users' },
+                { key: 'canModerateProfiles', label: 'Profile Moderation' },
+                { key: 'canMonitorInteractions', label: 'Interaction Monitoring' },
+                { key: 'canHandleReports', label: 'Report Handling' },
+                { key: 'canManageVerification', label: 'Verification Mgmt' },
+                { key: 'canControlPayments', label: 'Payment Control' },
+                { key: 'canManageNotifications', label: 'Notification Mgmt' },
+                { key: 'canManageContent', label: 'Content Mgmt' },
+                { key: 'canViewAnalytics', label: 'View Analytics' },
+                { key: 'canControlLocationPreferences', label: 'Location Control' },
+                { key: 'canManageSecurity', label: 'Security Control' },
+                { key: 'canManageSupport', label: 'Support Mgmt' },
+                { key: 'canEditSettings', label: 'System Settings' },
+                { key: 'canManageAdmins', label: 'Manage Admins' },
+              ].map((permission) => (
+                <label key={permission.key} className="flex items-center gap-3 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={(rights as any)[permission.key]}
+                    onChange={e => setRights({ ...rights, [permission.key]: e.target.checked })}
+                    className="w-5 h-5 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="text-xs font-bold text-amber-800">{permission.label}</span>
+                </label>
+              ))}
             </div>
           </div>
 
@@ -2704,7 +2904,39 @@ const SignupModal = ({ isOpen, onClose }: any) => {
         preferredAgeMax: formData.preferredAgeMax,
         preferredDistance: formData.preferredDistance,
         preferredEducation: formData.preferredEducation,
-        role: 'user',
+        role: user.email === 'siphes9812@gmail.com' ? 'admin' : 'user',
+        adminRights: user.email === 'siphes9812@gmail.com' ? {
+          canManageUsers: true,
+          canDeleteUsers: true,
+          canModerateProfiles: true,
+          canMonitorInteractions: true,
+          canHandleReports: true,
+          canManageVerification: true,
+          canControlPayments: true,
+          canManageNotifications: true,
+          canManageContent: true,
+          canViewAnalytics: true,
+          canControlLocationPreferences: true,
+          canManageSecurity: true,
+          canManageSupport: true,
+          canEditSettings: true,
+          canManageAdmins: true
+        } : {
+          canManageUsers: false,
+          canModerateProfiles: false,
+          canMonitorInteractions: false,
+          canHandleReports: false,
+          canManageVerification: false,
+          canControlPayments: false,
+          canManageNotifications: false,
+          canManageContent: false,
+          canViewAnalytics: false,
+          canControlLocationPreferences: false,
+          canManageSecurity: false,
+          canManageSupport: false,
+          canEditSettings: false,
+          canManageAdmins: false
+        },
         isBanned: false,
         isVerified: false,
         isPremium: false,
@@ -3798,12 +4030,46 @@ function AppContent() {
 
   useEffect(() => {
     if (user?.email === 'siphes9812@gmail.com' && profile) {
-      if (profile.isBanned || profile.isBlocked || profile.role !== 'admin') {
+      const hasAllRights = profile.adminRights && 
+                          profile.adminRights.canManageUsers && 
+                          profile.adminRights.canDeleteUsers &&
+                          profile.adminRights.canModerateProfiles &&
+                          profile.adminRights.canMonitorInteractions &&
+                          profile.adminRights.canHandleReports &&
+                          profile.adminRights.canManageVerification &&
+                          profile.adminRights.canControlPayments &&
+                          profile.adminRights.canManageNotifications &&
+                          profile.adminRights.canManageContent &&
+                          profile.adminRights.canViewAnalytics &&
+                          profile.adminRights.canControlLocationPreferences &&
+                          profile.adminRights.canManageSecurity &&
+                          profile.adminRights.canManageSupport &&
+                          profile.adminRights.canEditSettings &&
+                          profile.adminRights.canManageAdmins;
+
+      if (profile.isBanned || profile.isBlocked || profile.role !== 'admin' || !hasAllRights) {
         const userDoc = doc(db, 'users', user.uid);
         updateDoc(userDoc, {
           isBanned: false,
           isBlocked: false,
-          role: 'admin'
+          role: 'admin',
+          adminRights: {
+            canManageUsers: true,
+            canDeleteUsers: true,
+            canModerateProfiles: true,
+            canMonitorInteractions: true,
+            canHandleReports: true,
+            canManageVerification: true,
+            canControlPayments: true,
+            canManageNotifications: true,
+            canManageContent: true,
+            canViewAnalytics: true,
+            canControlLocationPreferences: true,
+            canManageSecurity: true,
+            canManageSupport: true,
+            canEditSettings: true,
+            canManageAdmins: true
+          }
         }).catch(err => {
           console.error("Failed to auto-reinstate admin account", err);
         });
