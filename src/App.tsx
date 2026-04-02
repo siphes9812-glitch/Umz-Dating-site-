@@ -549,7 +549,13 @@ const UserEditModal = ({
     bio: user.bio || '',
     role: user.role || 'user',
     isPremium: user.isPremium || false,
-    isVerified: user.isVerified || false
+    isVerified: user.isVerified || false,
+    adminRights: user.adminRights || {
+      canBan: false,
+      canDelete: false,
+      canManageAdmins: false,
+      canEditSettings: false
+    }
   });
   const [saving, setSaving] = useState(false);
 
@@ -616,6 +622,62 @@ const UserEditModal = ({
             </div>
           </div>
 
+          {formData.role === 'admin' && (
+            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 space-y-3">
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-amber-600 mb-1 ml-1">Admin Permissions</label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={formData.adminRights.canBan}
+                    onChange={e => setFormData(prev => ({ 
+                      ...prev, 
+                      adminRights: { ...prev.adminRights, canBan: e.target.checked } 
+                    }))}
+                    className="w-4 h-4 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="text-[10px] font-bold text-amber-800">Can Ban</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={formData.adminRights.canDelete}
+                    onChange={e => setFormData(prev => ({ 
+                      ...prev, 
+                      adminRights: { ...prev.adminRights, canDelete: e.target.checked } 
+                    }))}
+                    className="w-4 h-4 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="text-[10px] font-bold text-amber-800">Can Delete</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={formData.adminRights.canManageAdmins}
+                    onChange={e => setFormData(prev => ({ 
+                      ...prev, 
+                      adminRights: { ...prev.adminRights, canManageAdmins: e.target.checked } 
+                    }))}
+                    className="w-4 h-4 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="text-[10px] font-bold text-amber-800">Can Manage Admins</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={formData.adminRights.canEditSettings}
+                    onChange={e => setFormData(prev => ({ 
+                      ...prev, 
+                      adminRights: { ...prev.adminRights, canEditSettings: e.target.checked } 
+                    }))}
+                    className="w-4 h-4 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="text-[10px] font-bold text-amber-800">Can Edit Settings</span>
+                </label>
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Location</label>
             <input 
@@ -672,14 +734,19 @@ const UserEditModal = ({
 
 const AdminDashboard = () => {
   const [users, setUsers] = useState<UserType[]>([]);
+  const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeSubTab, setActiveSubTab] = useState<'users' | 'settings'>('users');
+  const [activeSubTab, setActiveSubTab] = useState<'users' | 'reports' | 'settings'>('users');
   const [editingUser, setEditingUser] = useState<UserType | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [showCreateAdmin, setShowCreateAdmin] = useState(false);
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [appSettings, setAppSettings] = useState<any>({
     maintenanceMode: false,
     registrationEnabled: true,
-    premiumOnly: false
+    premiumOnly: false,
+    broadcastMessage: ''
   });
 
   useEffect(() => {
@@ -689,19 +756,38 @@ const AdminDashboard = () => {
       setLoading(false);
     });
 
+    const qReports = query(collection(db, 'reports'), orderBy('createdAt', 'desc'));
+    const unsubscribeReports = onSnapshot(qReports, (snap) => {
+      setReports(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
       if (snap.exists()) {
-        setAppSettings(snap.data());
+        const data = snap.data();
+        setAppSettings(data);
+        setBroadcastMessage(data.broadcastMessage || '');
       }
     });
 
     return () => {
       unsubscribeUsers();
+      unsubscribeReports();
       unsubscribeSettings();
     };
   }, []);
 
+  const { profile: currentAdminProfile } = useAuth();
+
   const toggleBan = async (userId: string, currentStatus: boolean) => {
+    const targetUser = users.find(u => u.id === userId);
+    if (targetUser?.role === 'admin') {
+      alert("Cannot ban another administrator.");
+      return;
+    }
+    if (!currentAdminProfile?.adminRights?.canBan) {
+      alert("You do not have permission to ban users.");
+      return;
+    }
     try {
       await updateDoc(doc(db, 'users', userId), {
         isBanned: !currentStatus
@@ -712,6 +798,11 @@ const AdminDashboard = () => {
   };
 
   const toggleBlock = async (userId: string, currentStatus: boolean) => {
+    const targetUser = users.find(u => u.id === userId);
+    if (targetUser?.role === 'admin') {
+      alert("Cannot block another administrator.");
+      return;
+    }
     try {
       await updateDoc(doc(db, 'users', userId), {
         isBlocked: !currentStatus
@@ -729,7 +820,34 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleBroadcast = async () => {
+    if (isBroadcasting) return;
+    setIsBroadcasting(true);
+    try {
+      await updateGlobalSettings({ broadcastMessage });
+    } finally {
+      setIsBroadcasting(false);
+    }
+  };
+
+  const resolveReport = async (reportId: string, status: 'resolved' | 'dismissed') => {
+    try {
+      await updateDoc(doc(db, 'reports', reportId), { status });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `reports/${reportId}`);
+    }
+  };
+
   const deleteUser = async (userId: string) => {
+    const targetUser = users.find(u => u.id === userId);
+    if (targetUser?.role === 'admin') {
+      alert("Cannot delete another administrator.");
+      return;
+    }
+    if (!currentAdminProfile?.adminRights?.canDelete) {
+      alert("You do not have permission to delete users.");
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'users', userId));
       setConfirmDelete(null);
@@ -740,6 +858,18 @@ const AdminDashboard = () => {
 
   const handleSaveUser = async (updatedData: Partial<UserType>) => {
     if (!editingUser) return;
+    if (editingUser.role === 'admin' && updatedData.adminRights && !currentAdminProfile?.adminRights?.canManageAdmins) {
+      alert("You do not have permission to manage administrator rights.");
+      return;
+    }
+    if (editingUser.role === 'admin' && updatedData.role !== 'admin' && !currentAdminProfile?.adminRights?.canManageAdmins) {
+      alert("You do not have permission to demote administrators.");
+      return;
+    }
+    if (updatedData.role === 'admin' && editingUser.role !== 'admin' && !currentAdminProfile?.adminRights?.canManageAdmins) {
+      alert("You do not have permission to promote users to administrator.");
+      return;
+    }
     try {
       await updateDoc(doc(db, 'users', editingUser.id), updatedData);
     } catch (err) {
@@ -766,6 +896,24 @@ const AdminDashboard = () => {
               <div className="text-xl font-bold">{users.length}</div>
             </div>
           </div>
+          <div className="bg-white p-4 rounded-2xl border border-black/5 shadow-sm flex items-center gap-3">
+            <div className="w-10 h-10 bg-amber-400/10 rounded-xl flex items-center justify-center text-amber-400">
+              <Crown size={20} />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-slate-400 uppercase">Premium</div>
+              <div className="text-xl font-bold">{users.filter(u => u.isPremium).length}</div>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border border-black/5 shadow-sm flex items-center gap-3">
+            <div className="w-10 h-10 bg-green-400/10 rounded-xl flex items-center justify-center text-green-400">
+              <Zap size={20} />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-slate-400 uppercase">Online</div>
+              <div className="text-xl font-bold">{users.filter(u => u.isOnline).length}</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -780,6 +928,15 @@ const AdminDashboard = () => {
           User Management
         </button>
         <button 
+          onClick={() => setActiveSubTab('reports')}
+          className={cn(
+            "px-6 py-2 rounded-full font-bold text-sm transition-all",
+            activeSubTab === 'reports' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-white text-slate-500 hover:bg-slate-50"
+          )}
+        >
+          Reports ({reports.filter(r => r.status === 'pending').length})
+        </button>
+        <button 
           onClick={() => setActiveSubTab('settings')}
           className={cn(
             "px-6 py-2 rounded-full font-bold text-sm transition-all",
@@ -788,9 +945,18 @@ const AdminDashboard = () => {
         >
           App Settings
         </button>
+        {currentAdminProfile?.adminRights?.canManageAdmins && (
+          <button 
+            onClick={() => setShowCreateAdmin(true)}
+            className="ml-auto px-6 py-2 rounded-full font-bold text-sm bg-amber-500 text-white shadow-lg shadow-amber-500/20 hover:bg-amber-600 transition-all flex items-center gap-2"
+          >
+            <Plus size={16} />
+            Add Admin
+          </button>
+        )}
       </div>
 
-      {activeSubTab === 'users' ? (
+      {activeSubTab === 'users' && (
         <div className="bg-white rounded-[32px] border border-black/5 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -848,33 +1014,37 @@ const AdminDashboard = () => {
                         >
                           <Edit3 size={18} />
                         </button>
-                        <button 
-                          onClick={() => toggleBlock(u.id, !!u.isBlocked)}
-                          className={cn(
-                            "p-2 rounded-lg transition-all",
-                            u.isBlocked ? "bg-orange-50 text-orange-600 hover:bg-orange-100" : "bg-slate-50 text-slate-400 hover:bg-slate-100"
-                          )}
-                          title={u.isBlocked ? "Unblock User" : "Block User"}
-                        >
-                          <ShieldAlert size={18} />
-                        </button>
-                        <button 
-                          onClick={() => toggleBan(u.id, !!u.isBanned)}
-                          className={cn(
-                            "p-2 rounded-lg transition-all",
-                            u.isBanned ? "bg-green-50 text-green-600 hover:bg-green-100" : "bg-amber-50 text-amber-600 hover:bg-amber-100"
-                          )}
-                          title={u.isBanned ? "Unban User" : "Ban User"}
-                        >
-                          <ShieldCheck size={18} />
-                        </button>
-                        <button 
-                          onClick={() => setConfirmDelete(u.id)}
-                          className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
-                          title="Delete User"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                        {u.role !== 'admin' && (
+                          <>
+                            <button 
+                              onClick={() => toggleBlock(u.id, !!u.isBlocked)}
+                              className={cn(
+                                "p-2 rounded-lg transition-all",
+                                u.isBlocked ? "bg-orange-50 text-orange-600 hover:bg-orange-100" : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+                              )}
+                              title={u.isBlocked ? "Unblock User" : "Block User"}
+                            >
+                              <ShieldAlert size={18} />
+                            </button>
+                            <button 
+                              onClick={() => toggleBan(u.id, !!u.isBanned)}
+                              className={cn(
+                                "p-2 rounded-lg transition-all",
+                                u.isBanned ? "bg-green-50 text-green-600 hover:bg-green-100" : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+                              )}
+                              title={u.isBanned ? "Unban User" : "Ban User"}
+                            >
+                              <ShieldCheck size={18} />
+                            </button>
+                            <button 
+                              onClick={() => setConfirmDelete(u.id)}
+                              className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
+                              title="Delete User"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -883,7 +1053,86 @@ const AdminDashboard = () => {
             </table>
           </div>
         </div>
-      ) : (
+      )}
+
+      {activeSubTab === 'reports' && (
+        <div className="bg-white rounded-[32px] border border-black/5 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Reported User</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Reason</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Details</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.map(r => {
+                  const reportedUser = users.find(u => u.id === r.reportedId);
+                  return (
+                    <tr key={r.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                      <td className="p-5">
+                        <div className="flex items-center gap-3">
+                          <img src={reportedUser?.images?.[0] || `https://picsum.photos/seed/${r.reportedId}/100/100`} className="w-10 h-10 rounded-full object-cover" alt="" />
+                          <div>
+                            <div className="font-bold text-sm">{reportedUser?.name || 'Unknown User'}</div>
+                            <div className="text-[10px] text-slate-400">ID: {r.reportedId}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-5">
+                        <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600 text-[9px] font-bold uppercase">{r.reason}</span>
+                      </td>
+                      <td className="p-5 text-xs text-slate-500 max-w-xs truncate">
+                        {r.message || 'No details provided'}
+                      </td>
+                      <td className="p-5">
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-[9px] font-bold uppercase",
+                          r.status === 'pending' ? "bg-amber-100 text-amber-600" : "bg-green-100 text-green-600"
+                        )}>
+                          {r.status}
+                        </span>
+                      </td>
+                      <td className="p-5 text-right">
+                        <div className="flex justify-end gap-2">
+                          {r.status === 'pending' && (
+                            <>
+                              <button 
+                                onClick={() => resolveReport(r.id, 'resolved')}
+                                className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-all"
+                                title="Resolve Report"
+                              >
+                                <CheckCircle2 size={18} />
+                              </button>
+                              <button 
+                                onClick={() => resolveReport(r.id, 'dismissed')}
+                                className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:bg-slate-100 transition-all"
+                                title="Dismiss Report"
+                              >
+                                <X size={18} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {reports.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="p-10 text-center text-slate-400 italic">No reports found.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'settings' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
             <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
@@ -951,18 +1200,54 @@ const AdminDashboard = () => {
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-slate-900 to-black p-8 rounded-[32px] text-white">
-            <h3 className="text-xl font-bold mb-4">Admin Notice</h3>
-            <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-              Changes made here affect all users in real-time. Please use these controls responsibly to maintain the integrity of the uMzimkhulu Love Link community.
-            </p>
-            <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-              <div className="flex items-center gap-3 mb-2">
-                <ShieldCheck className="text-primary" size={20} />
-                <span className="font-bold">System Status</span>
+          <div className="space-y-6">
+            <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+              <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
+                <Bell size={20} className="text-primary" />
+                Broadcast Message
+              </h3>
+              <p className="text-sm text-slate-500 mb-4">This message will be displayed to all users (e.g., during maintenance).</p>
+              <textarea 
+                value={broadcastMessage}
+                onChange={(e) => setBroadcastMessage(e.target.value)}
+                placeholder="Enter maintenance notice or announcement..."
+                className="w-full px-4 py-3 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all resize-none text-sm mb-4"
+                rows={3}
+              />
+              <button 
+                onClick={handleBroadcast}
+                disabled={isBroadcasting}
+                className="w-full btn-primary py-3 text-sm"
+              >
+                {isBroadcasting ? "Updating..." : "Update Broadcast Message"}
+              </button>
+            </div>
+
+            <div className="bg-gradient-to-br from-slate-900 to-black p-8 rounded-[32px] text-white">
+              <h3 className="text-xl font-bold mb-4">Recent Activity</h3>
+              <div className="space-y-4">
+                {users.slice(0, 5).map(u => (
+                  <div key={u.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10">
+                    <img src={u.images?.[0] || `https://picsum.photos/seed/${u.id}/50/50`} className="w-8 h-8 rounded-full" alt="" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold truncate">{u.name} joined</div>
+                      <div className="text-[10px] text-slate-400">{u.createdAt?.toDate ? formatDistanceToNow(u.createdAt.toDate()) : 'Recently'} ago</div>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="text-xs text-slate-400">
-                All systems operational. Database latency: 24ms.
+            </div>
+
+            <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+              <h3 className="text-xl font-bold mb-4">System Status</h3>
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-3 mb-2">
+                  <ShieldCheck className="text-primary" size={20} />
+                  <span className="font-bold text-slate-900">All Systems Operational</span>
+                </div>
+                <div className="text-xs text-slate-400">
+                  Database latency: 24ms. API status: Active.
+                </div>
               </div>
             </div>
           </div>
@@ -971,6 +1256,24 @@ const AdminDashboard = () => {
 
       {/* Admin Modals */}
       <AnimatePresence>
+        {showCreateAdmin && (
+          <CreateAdminModal 
+            users={users.filter(u => u.role !== 'admin')}
+            onClose={() => setShowCreateAdmin(false)}
+            // Better to pass a direct promote function
+            promoteUser={async (userId, rights) => {
+              try {
+                await updateDoc(doc(db, 'users', userId), {
+                  role: 'admin',
+                  adminRights: rights
+                });
+                setShowCreateAdmin(false);
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+              }
+            }}
+          />
+        )}
         {editingUser && (
           <UserEditModal 
             user={editingUser} 
@@ -988,6 +1291,117 @@ const AdminDashboard = () => {
           />
         )}
       </AnimatePresence>
+    </div>
+  );
+};
+
+const CreateAdminModal = ({ 
+  users, 
+  onClose, 
+  promoteUser 
+}: { 
+  users: UserType[]; 
+  onClose: () => void; 
+  promoteUser: (userId: string, rights: any) => Promise<void>;
+}) => {
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [rights, setRights] = useState({
+    canBan: false,
+    canDelete: false,
+    canManageAdmins: false,
+    canEditSettings: false
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUserId) return;
+    setSubmitting(true);
+    await promoteUser(selectedUserId, rights);
+    setSubmitting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-[32px] p-8 max-w-md w-full shadow-2xl"
+      >
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold">Add New Administrator</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-all">
+            <X size={20} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 ml-1">Select User to Promote</label>
+            <select 
+              value={selectedUserId}
+              onChange={e => setSelectedUserId(e.target.value)}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary outline-none transition-all appearance-none bg-white text-sm"
+              required
+            >
+              <option value="">Choose a user...</option>
+              {users.map(u => (
+                <option key={u.id} value={u.id}>{u.name} ({u.email || u.id.substring(0, 8)})</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 space-y-4">
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-amber-600 ml-1">Assign Permissions</label>
+            <div className="grid grid-cols-2 gap-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={rights.canBan}
+                  onChange={e => setRights({ ...rights, canBan: e.target.checked })}
+                  className="w-5 h-5 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-xs font-bold text-amber-800">Can Ban</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={rights.canDelete}
+                  onChange={e => setRights({ ...rights, canDelete: e.target.checked })}
+                  className="w-5 h-5 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-xs font-bold text-amber-800">Can Delete</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={rights.canManageAdmins}
+                  onChange={e => setRights({ ...rights, canManageAdmins: e.target.checked })}
+                  className="w-5 h-5 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-xs font-bold text-amber-800">Manage Admins</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={rights.canEditSettings}
+                  onChange={e => setRights({ ...rights, canEditSettings: e.target.checked })}
+                  className="w-5 h-5 rounded border-amber-200 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-xs font-bold text-amber-800">Edit Settings</span>
+              </label>
+            </div>
+          </div>
+
+          <button 
+            type="submit" 
+            disabled={submitting || !selectedUserId}
+            className="w-full py-4 bg-amber-500 text-white rounded-2xl font-bold shadow-lg shadow-amber-200 hover:bg-amber-600 transition-all disabled:opacity-50"
+          >
+            {submitting ? "Promoting..." : "Promote to Admin"}
+          </button>
+        </form>
+      </motion.div>
     </div>
   );
 };
@@ -1611,7 +2025,45 @@ const ProfileDetailModal = ({ user, currentUserProfile, onClose, onLike, onPass,
   );
 };
 
-const Dashboard = () => {
+const Dashboard = ({ onSelectMatch }: { onSelectMatch: (matchId: string) => void }) => {
+  const { user } = useAuth();
+  const [matches, setMatches] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'matches'),
+      where('users', 'array-contains', user.uid),
+      orderBy('timestamp', 'desc'),
+      limit(5)
+    );
+    const unsubscribe = onSnapshot(q, async (snap) => {
+      const matchesData = await Promise.all(snap.docs.map(async (matchDoc) => {
+        const data = matchDoc.data();
+        const otherUserId = data.users.find((id: string) => id !== user.uid);
+        const userDoc = await getDoc(doc(db, 'users', otherUserId));
+        return {
+          id: matchDoc.id,
+          otherUser: { id: otherUserId, ...userDoc.data() },
+          ...data
+        };
+      }));
+      setMatches(matchesData);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const deleteMatch = async (matchId: string) => {
+    if (!window.confirm("Are you sure you want to delete this match? This will also delete your conversation.")) return;
+    try {
+      await deleteDoc(doc(db, 'matches', matchId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `matches/${matchId}`);
+    }
+  };
+
   const data = [
     { name: 'Mon', matches: 4, views: 24 },
     { name: 'Tue', matches: 7, views: 32 },
@@ -1688,11 +2140,40 @@ const Dashboard = () => {
         <div className="p-8 rounded-3xl border bg-white border-black/5 shadow-sm">
           <h3 className="text-xl font-bold mb-6">Recent Matches</h3>
           <div className="space-y-6">
-            <div className="text-center py-10 text-slate-400 text-sm italic">
-              No recent matches to show.
-            </div>
+            {loading ? (
+              <div className="text-center py-10 text-slate-400 text-sm">Loading matches...</div>
+            ) : matches.length > 0 ? (
+              matches.map((match) => (
+                <div key={match.id} className="flex items-center justify-between group">
+                  <button 
+                    onClick={() => onSelectMatch(match.id)}
+                    className="flex items-center gap-3 flex-1 text-left"
+                  >
+                    <img src={match.otherUser.images?.[0] || `https://picsum.photos/seed/${match.otherUser.id}/100/100`} className="w-12 h-12 rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
+                    <div>
+                      <div className="font-bold text-sm">{match.otherUser.name}</div>
+                      <div className="text-[10px] text-slate-400">Matched {match.timestamp?.toDate ? formatDistanceToNow(match.timestamp.toDate()) : 'Recently'} ago</div>
+                    </div>
+                  </button>
+                  <button 
+                    onClick={() => deleteMatch(match.id)}
+                    className="p-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                    title="Delete Match"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-10 text-slate-400 text-sm italic">
+                No recent matches to show.
+              </div>
+            )}
           </div>
-          <button className="w-full mt-8 py-3 rounded-xl border border-primary/20 text-primary font-semibold hover:bg-primary/5 transition-all">
+          <button 
+            onClick={() => onSelectMatch('')}
+            className="w-full mt-8 py-3 rounded-xl border border-primary/20 text-primary font-semibold hover:bg-primary/5 transition-all"
+          >
             View All Matches
           </button>
         </div>
@@ -1837,6 +2318,18 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
     }
   };
 
+  const deleteMatch = async (matchId: string) => {
+    if (!window.confirm("Are you sure you want to delete this match? This will also delete your conversation.")) return;
+    try {
+      await deleteDoc(doc(db, 'matches', matchId));
+      if (selectedMatchId === matchId) {
+        setSelectedMatchId(null);
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `matches/${matchId}`);
+    }
+  };
+
   const deleteMessage = async (msgId: string) => {
     if (!user || !selectedMatch) return;
     const chatId = [user.uid, selectedMatch.otherUser.id].sort().join('_');
@@ -1850,7 +2343,10 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
   return (
     <div className="pt-20 pb-6 px-4 max-w-6xl mx-auto h-[calc(100vh-20px)] flex gap-6">
       {/* Sidebar */}
-      <div className="hidden md:flex flex-col w-72 rounded-3xl border overflow-hidden bg-white border-black/5 shadow-sm">
+      <div className={cn(
+        "flex-col w-full md:w-72 rounded-3xl border overflow-hidden bg-white border-black/5 shadow-sm",
+        selectedMatchId ? "hidden md:flex" : "flex"
+      )}>
         <div className="p-5 border-b border-inherit">
           <h3 className="text-lg font-bold mb-3">Messages</h3>
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/5">
@@ -1860,13 +2356,20 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
         </div>
         <div className="flex-1 overflow-y-auto">
           {matches.map((match) => (
-            <button 
+            <div 
               key={match.id} 
               onClick={() => setSelectedMatchId(match.id)}
               className={cn(
-                "w-full p-4 flex items-center gap-4 hover:bg-primary/5 transition-colors border-b border-inherit",
+                "w-full p-4 flex items-center gap-4 hover:bg-primary/5 transition-colors border-b border-inherit group cursor-pointer",
                 selectedMatchId === match.id && "bg-primary/5 border-l-4 border-l-primary"
               )}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  setSelectedMatchId(match.id);
+                }
+              }}
             >
               <img src={match.otherUser.images?.[0] || `https://picsum.photos/seed/${match.otherUser.id}/200/200`} alt={match.otherUser.name} className="w-12 h-12 rounded-full object-cover" referrerPolicy="no-referrer" />
               <div className="flex-1 text-left">
@@ -1875,7 +2378,17 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
                 </div>
                 <p className="text-xs text-slate-500 truncate">Click to chat</p>
               </div>
-            </button>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteMatch(match.id);
+                }}
+                className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 transition-all"
+                title="Delete Match"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
           ))}
           {matches.length === 0 && (
             <div className="p-8 text-center text-slate-400 text-sm">
@@ -1886,11 +2399,20 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col rounded-3xl border overflow-hidden bg-white border-black/5 shadow-sm">
+      <div className={cn(
+        "flex-1 flex-col rounded-3xl border overflow-hidden bg-white border-black/5 shadow-sm",
+        selectedMatchId ? "flex" : "hidden md:flex"
+      )}>
         {selectedMatch ? (
           <>
             <div className="p-4 border-b border-inherit flex items-center justify-between">
               <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => setSelectedMatchId(null)}
+                  className="md:hidden p-2 -ml-2 hover:bg-black/5 rounded-full transition-colors"
+                >
+                  <ChevronLeft size={24} />
+                </button>
                 <img src={selectedMatch.otherUser.images?.[0] || `https://picsum.photos/seed/${selectedMatch.otherUser.id}/200/200`} alt={selectedMatch.otherUser.name} className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
                 <div>
                   <h5 className="font-bold text-sm">{selectedMatch.otherUser.name}</h5>
@@ -2033,6 +2555,7 @@ const Pricing = () => {
 
 const SignupModal = ({ isOpen, onClose }: any) => {
   const [step, setStep] = useState(1);
+  const totalSteps = 8;
   const [formData, setFormData] = useState({ 
     name: '', 
     age: '', 
@@ -2041,7 +2564,9 @@ const SignupModal = ({ isOpen, onClose }: any) => {
     bio: '',
     height: '',
     education: '',
-    zodiac: '',
+    smoking: 'never',
+    drinking: 'never',
+    relationshipGoal: 'dating',
     hobbies: [] as string[],
     images: [] as string[],
     latitude: null as number | null,
@@ -2054,6 +2579,7 @@ const SignupModal = ({ isOpen, onClose }: any) => {
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGeneratingBio, setIsGeneratingBio] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
 
   useEffect(() => {
     if (isOpen && navigator.geolocation) {
@@ -2164,11 +2690,14 @@ const SignupModal = ({ isOpen, onClose }: any) => {
         lookingFor: formData.lookingFor || 'Both',
         location: 'uMzimkhulu Central',
         bio: formData.bio || 'New member!',
-        height: formData.height || 'Not specified',
+        height: parseInt(formData.height) || 170,
         education: formData.education || 'Not specified',
-        zodiac: formData.zodiac || 'Not specified',
+        smoking: formData.smoking,
+        drinking: formData.drinking,
+        relationshipGoal: formData.relationshipGoal,
         images: formData.images,
         interests: formData.hobbies,
+        hobbies: formData.hobbies,
         latitude: formData.latitude,
         longitude: formData.longitude,
         preferredAgeMin: formData.preferredAgeMin,
@@ -2183,26 +2712,24 @@ const SignupModal = ({ isOpen, onClose }: any) => {
         lastSeen: serverTimestamp(),
         createdAt: serverTimestamp()
       }, { merge: true });
-      onClose();
+      setIsSuccess(true);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
-    } finally {
       setIsSubmitting(false);
     }
   };
 
   if (!isOpen) return null;
 
-  const totalSteps = 7;
-
   const isStepValid = () => {
     if (step === 1) return formData.name && formData.age;
     if (step === 2) return formData.gender && formData.lookingFor;
     if (step === 3) return formData.height && formData.education;
-    if (step === 4) return formData.zodiac && formData.bio;
-    if (step === 5) return formData.hobbies.length >= 3;
+    if (step === 4) return formData.smoking && formData.drinking && formData.relationshipGoal;
+    if (step === 5) return formData.bio && formData.hobbies.length >= 3;
     if (step === 6) return formData.images.length >= 2;
-    if (step === 7) return formData.preferredAgeMin && formData.preferredAgeMax && formData.preferredDistance;
+    if (step === 7) return formData.latitude && formData.longitude;
+    if (step === 8) return formData.preferredAgeMin && formData.preferredAgeMax && formData.preferredDistance;
     return true;
   };
 
@@ -2223,14 +2750,31 @@ const SignupModal = ({ isOpen, onClose }: any) => {
         </button>
 
         <div className="p-8">
-          <div className="flex gap-2 mb-8">
-            {[1, 2, 3, 4, 5, 6, 7].map(s => (
-              <div key={s} className={cn("h-1.5 flex-1 rounded-full transition-all duration-500", s <= step ? "bg-primary" : "bg-slate-100")} />
-            ))}
-          </div>
+          {isSuccess ? (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="py-12 text-center"
+            >
+              <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                <CheckCircle2 size={40} />
+              </div>
+              <h3 className="text-2xl font-bold mb-2">Welcome Aboard!</h3>
+              <p className="text-slate-500 text-sm mb-8">Your profile has been created successfully. We're setting everything up for you...</p>
+              <div className="flex justify-center">
+                <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+              </div>
+            </motion.div>
+          ) : (
+            <>
+              <div className="flex gap-2 mb-8">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                  <div key={s} className={cn("h-1.5 flex-1 rounded-full transition-all duration-500", s <= step ? "bg-primary" : "bg-slate-100")} />
+                ))}
+              </div>
 
-          <AnimatePresence mode="wait">
-            {step === 1 && (
+              <AnimatePresence mode="wait">
+                {step === 1 && (
               <motion.div
                 key="step1"
                 initial={{ opacity: 0, x: 20 }}
@@ -2361,22 +2905,74 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
               >
-                <h3 className="text-2xl font-bold mb-2">Personality</h3>
-                <p className="text-slate-500 text-sm mb-8">What makes you, you?</p>
+                <h3 className="text-2xl font-bold mb-2">Lifestyle</h3>
+                <p className="text-slate-500 text-sm mb-8">Tell us a bit about your habits.</p>
                 <div className="space-y-5">
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Zodiac Sign</label>
-                    <select 
-                      value={formData.zodiac}
-                      onChange={(e) => setFormData({ ...formData, zodiac: e.target.value })}
-                      className="w-full px-4 py-3.5 rounded-2xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm appearance-none"
-                    >
-                      <option value="">Select Sign</option>
-                      {['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces'].map(z => (
-                        <option key={z} value={z}>{z}</option>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Smoking</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {['never', 'occasionally', 'socially', 'regularly'].map(opt => (
+                        <button
+                          key={opt}
+                          onClick={() => setFormData({ ...formData, smoking: opt as any })}
+                          className={cn(
+                            "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all capitalize",
+                            formData.smoking === opt ? "border-primary bg-primary/5 text-primary" : "border-slate-100 hover:border-primary"
+                          )}
+                        >
+                          {opt}
+                        </button>
                       ))}
-                    </select>
+                    </div>
                   </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Drinking</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {['never', 'occasionally', 'socially', 'regularly'].map(opt => (
+                        <button
+                          key={opt}
+                          onClick={() => setFormData({ ...formData, drinking: opt as any })}
+                          className={cn(
+                            "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all capitalize",
+                            formData.drinking === opt ? "border-primary bg-primary/5 text-primary" : "border-slate-100 hover:border-primary"
+                          )}
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Relationship Goal</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {['dating', 'friendship', 'long-term', 'marriage'].map(opt => (
+                        <button
+                          key={opt}
+                          onClick={() => setFormData({ ...formData, relationshipGoal: opt as any })}
+                          className={cn(
+                            "py-2 px-3 rounded-xl border text-[10px] font-bold transition-all capitalize",
+                            formData.relationshipGoal === opt ? "border-primary bg-primary/5 text-primary" : "border-slate-100 hover:border-primary"
+                          )}
+                        >
+                          {opt.replace('-', ' ')}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {step === 5 && (
+              <motion.div
+                key="step5"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+              >
+                <h3 className="text-2xl font-bold mb-2">Bio & Interests</h3>
+                <p className="text-slate-500 text-sm mb-6">Tell us about yourself and what you love.</p>
+                <div className="space-y-6">
                   <div>
                     <div className="flex justify-between items-center mb-2">
                       <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Bio</label>
@@ -2393,46 +2989,37 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                       value={formData.bio}
                       onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
                       placeholder="Tell us something interesting..."
-                      className="w-full px-4 py-3.5 rounded-2xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm h-28 resize-none"
+                      className="w-full px-4 py-3.5 rounded-2xl outline-none border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary transition-all text-sm h-24 resize-none"
                     />
                   </div>
-                </div>
-              </motion.div>
-            )}
-
-            {step === 5 && (
-              <motion.div
-                key="step5"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-              >
-                <h3 className="text-2xl font-bold mb-2">Interests & Hobbies</h3>
-                <p className="text-slate-500 text-sm mb-6">Select at least 3 things you love.</p>
-                <div className="flex flex-wrap gap-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                  {PREDEFINED_INTERESTS.map(interest => {
-                    const isSelected = formData.hobbies.includes(interest);
-                    return (
-                      <button
-                        key={interest}
-                        onClick={() => {
-                          if (isSelected) {
-                            setFormData({ ...formData, hobbies: formData.hobbies.filter(h => h !== interest) });
-                          } else {
-                            setFormData({ ...formData, hobbies: [...formData.hobbies, interest] });
-                          }
-                        }}
-                        className={cn(
-                          "px-4 py-2 rounded-full text-xs font-bold transition-all border",
-                          isSelected 
-                            ? "bg-primary border-primary text-white" 
-                            : "bg-slate-50 border-slate-100 text-slate-600 hover:border-primary"
-                        )}
-                      >
-                        {interest}
-                      </button>
-                    );
-                  })}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Interests (Select at least 3)</label>
+                    <div className="flex flex-wrap gap-2 max-h-[150px] overflow-y-auto pr-2 custom-scrollbar">
+                      {PREDEFINED_INTERESTS.map(interest => {
+                        const isSelected = formData.hobbies.includes(interest);
+                        return (
+                          <button
+                            key={interest}
+                            onClick={() => {
+                              if (isSelected) {
+                                setFormData({ ...formData, hobbies: formData.hobbies.filter(h => h !== interest) });
+                              } else {
+                                setFormData({ ...formData, hobbies: [...formData.hobbies, interest] });
+                              }
+                            }}
+                            className={cn(
+                              "px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border",
+                              isSelected 
+                                ? "bg-primary border-primary text-white" 
+                                : "bg-slate-50 border-slate-100 text-slate-600 hover:border-primary"
+                            )}
+                          >
+                            {interest}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -2484,79 +3071,112 @@ const SignupModal = ({ isOpen, onClose }: any) => {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
               >
-                <h3 className="text-2xl font-bold mb-2">Matching Preferences</h3>
-                <p className="text-slate-500 text-sm mb-6">Tell us who you're looking for.</p>
+                <h3 className="text-2xl font-bold mb-2">Your Location</h3>
+                <p className="text-slate-500 text-sm mb-8">We use your location to find matches nearby.</p>
                 
                 <div className="space-y-6">
+                  <div className="flex flex-col items-center justify-center p-10 rounded-[32px] border-2 border-dashed border-slate-100 bg-slate-50/50 text-center">
+                    <div className={cn(
+                      "w-20 h-20 rounded-full flex items-center justify-center mb-6 transition-all duration-500",
+                      formData.latitude ? "bg-green-100 text-green-600" : "bg-primary/10 text-primary animate-pulse"
+                    )}>
+                      <MapPin size={40} />
+                    </div>
+                    <h4 className="text-lg font-bold mb-2">
+                      {formData.latitude ? "Location Captured!" : "Enable Location Access"}
+                    </h4>
+                    <p className="text-xs text-slate-500 mb-8 max-w-[240px]">
+                      {formData.latitude 
+                        ? "Great! We've found your coordinates. You can now proceed to set your matching preferences." 
+                        : "To show you people in your area, we need to know where you are. Please click the button below to share your location."}
+                    </p>
+                    
+                    {!formData.latitude ? (
+                      <button 
+                        onClick={() => {
+                          if (navigator.geolocation) {
+                            navigator.geolocation.getCurrentPosition(
+                              (pos) => setFormData(prev => ({ ...prev, latitude: pos.coords.latitude, longitude: pos.coords.longitude })),
+                              (err) => alert("Please enable location permissions in your browser settings to continue.")
+                            );
+                          } else {
+                            alert("Geolocation is not supported by your browser.");
+                          }
+                        }}
+                        className="btn-primary px-10 py-4 shadow-xl shadow-primary/20"
+                      >
+                        Find My Location
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-2 text-[10px] font-bold text-green-600 uppercase tracking-widest">
+                        <CheckCircle2 size={16} />
+                        Ready to continue
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {step === 8 && (
+              <motion.div
+                key="step8"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+              >
+                <h3 className="text-2xl font-bold mb-2">Matching Preferences</h3>
+                <p className="text-slate-500 text-sm mb-6">Who would you like to meet?</p>
+                
+                <div className="space-y-8">
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Age Range ({formData.preferredAgeMin} - {formData.preferredAgeMax})</label>
+                    <div className="flex justify-between items-center mb-4">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Age Range</label>
+                      <span className="text-xs font-bold text-primary">{formData.preferredAgeMin} - {formData.preferredAgeMax} years</span>
+                    </div>
                     <div className="flex items-center gap-4">
                       <div className="flex-1">
-                        <span className="text-[9px] text-slate-400 block mb-1">Min Age</span>
+                        <span className="text-[9px] text-slate-400 block mb-1 uppercase font-bold">Min</span>
                         <input 
                           type="range" 
                           min="18" 
                           max="100" 
                           value={formData.preferredAgeMin}
                           onChange={(e) => setFormData({ ...formData, preferredAgeMin: parseInt(e.target.value) })}
-                          className="w-full accent-primary"
+                          className="w-full accent-primary h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer"
                         />
                       </div>
                       <div className="flex-1">
-                        <span className="text-[9px] text-slate-400 block mb-1">Max Age</span>
+                        <span className="text-[9px] text-slate-400 block mb-1 uppercase font-bold">Max</span>
                         <input 
                           type="range" 
                           min="18" 
                           max="100" 
                           value={formData.preferredAgeMax}
                           onChange={(e) => setFormData({ ...formData, preferredAgeMax: parseInt(e.target.value) })}
-                          className="w-full accent-primary"
+                          className="w-full accent-primary h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer"
                         />
                       </div>
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Maximum Distance ({formData.preferredDistance} km)</label>
+                    <div className="flex justify-between items-center mb-4">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Maximum Distance</label>
+                      <span className="text-xs font-bold text-primary">{formData.preferredDistance} km</span>
+                    </div>
                     <input 
                       type="range" 
                       min="1" 
                       max="500" 
                       value={formData.preferredDistance}
                       onChange={(e) => setFormData({ ...formData, preferredDistance: parseInt(e.target.value) })}
-                      className="w-full accent-primary"
+                      className="w-full accent-primary h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer"
                     />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-3 block">Preferred Education</label>
-                    <div className="flex flex-wrap gap-2">
-                      {["High School", "Bachelor's", "Master's", "PhD", "Other"].map(edu => {
-                        const isSelected = formData.preferredEducation.includes(edu);
-                        return (
-                          <button
-                            key={edu}
-                            type="button"
-                            onClick={() => {
-                              if (isSelected) {
-                                setFormData({ ...formData, preferredEducation: formData.preferredEducation.filter(e => e !== edu) });
-                              } else {
-                                setFormData({ ...formData, preferredEducation: [...formData.preferredEducation, edu] });
-                              }
-                            }}
-                            className={cn(
-                              "px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all border",
-                              isSelected 
-                                ? "bg-primary border-primary text-white" 
-                                : "bg-slate-50 border-slate-100 text-slate-600"
-                            )}
-                          >
-                            {edu}
-                          </button>
-                        );
-                      })}
+                    <div className="flex justify-between mt-2">
+                      <span className="text-[9px] text-slate-400 font-bold">1km</span>
+                      <span className="text-[9px] text-slate-400 font-bold">500km</span>
                     </div>
-                    <p className="text-[9px] text-slate-400 mt-2 italic">* Leave empty to match with any educational background</p>
                   </div>
                 </div>
               </motion.div>
@@ -2580,10 +3200,12 @@ const SignupModal = ({ isOpen, onClose }: any) => {
               {isSubmitting ? 'Saving...' : step === totalSteps ? 'Complete Profile' : 'Continue'}
             </button>
           </div>
-        </div>
-      </motion.div>
-    </motion.div>
-  );
+        </>
+      )}
+    </div>
+  </motion.div>
+</motion.div>
+);
 };
 
 // --- Profile View ---
@@ -3218,6 +3840,7 @@ function AppContent() {
         .filter(p => {
           if (p.id === user?.uid) return false;
           if (p.isBanned || p.isBlocked) return false;
+          if (p.role === 'admin') return false;
           if (!profile) return true;
 
           const myGender = profile.gender;
@@ -3341,7 +3964,7 @@ function AppContent() {
           </div>
           <h1 className="text-3xl font-bold mb-4">Under Maintenance</h1>
           <p className="text-slate-400 mb-8">
-            uMzimkhulu Love Link is currently undergoing scheduled maintenance. We'll be back online shortly!
+            {appSettings.broadcastMessage || "uMzimkhulu Love Link is currently undergoing scheduled maintenance. We'll be back online shortly!"}
           </p>
           {user && <button onClick={logout} className="px-8 py-3 rounded-full border border-white/20 hover:bg-white/5 transition-all">Logout</button>}
         </div>
@@ -3562,7 +4185,10 @@ function AppContent() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
-              <Dashboard />
+              <Dashboard onSelectMatch={(id) => {
+                if (id) setSelectedMatchId(id);
+                setActiveTab('chat');
+              }} />
             </motion.div>
           )}
 

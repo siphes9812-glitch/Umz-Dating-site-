@@ -1,3 +1,10 @@
+export interface AdminRights {
+  canBan: boolean;
+  canDelete: boolean;
+  canManageAdmins: boolean;
+  canEditSettings: boolean;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -8,8 +15,16 @@ export interface User {
   bio: string;
   images: string[];
   interests: string[];
+  hobbies: string[]; // Added hobbies to match App.tsx usage
   lookingFor?: string;
+  zodiac?: string; // Keeping it optional in case some data exists, but will remove from form
+  height: number;
+  smoking: 'never' | 'occasionally' | 'socially' | 'regularly';
+  drinking: 'never' | 'occasionally' | 'socially' | 'regularly';
+  relationshipGoal: 'dating' | 'friendship' | 'long-term' | 'marriage';
   role?: 'admin' | 'user';
+  email?: string;
+  adminRights?: AdminRights;
   isBanned?: boolean;
   isBlocked?: boolean;
   isVerified: boolean;
