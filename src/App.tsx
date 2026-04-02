@@ -2381,7 +2381,17 @@ const Hero = () => {
   );
 };
 
-const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onReport, onClick }: { user: UserType, currentUserProfile?: UserType | null, onLike: () => void | Promise<void>, onPass: () => void, onMessage: () => void, onReport: () => void, onClick?: () => void, key?: string }) => {
+const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onReport, onClick, compact = false }: { 
+  user: UserType, 
+  currentUserProfile?: UserType | null, 
+  onLike: () => void | Promise<void>, 
+  onPass: () => void, 
+  onMessage: () => void, 
+  onReport: () => void, 
+  onClick?: () => void, 
+  key?: string,
+  compact?: boolean
+}) => {
   const distance = (currentUserProfile?.latitude && currentUserProfile?.longitude && user.latitude && user.longitude)
     ? calculateDistance(currentUserProfile.latitude, currentUserProfile.longitude, user.latitude, user.longitude)
     : null;
@@ -2389,10 +2399,13 @@ const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onRe
   return (
     <motion.div
       whileHover={{ y: -10 }}
-      className="relative group rounded-3xl overflow-hidden shadow-2xl transition-all duration-500 bg-white cursor-pointer"
+      className={cn(
+        "relative group rounded-3xl overflow-hidden shadow-2xl transition-all duration-500 bg-white cursor-pointer",
+        compact ? "rounded-2xl shadow-lg" : "rounded-3xl shadow-2xl"
+      )}
       onClick={onClick}
     >
-      <div className="aspect-[3/4] overflow-hidden relative">
+      <div className={cn("overflow-hidden relative", compact ? "aspect-square" : "aspect-[3/4]")}>
         <img 
           src={user.images?.[0] || `https://picsum.photos/seed/${user.id}/400/600`} 
           alt={user.name} 
@@ -2402,62 +2415,70 @@ const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onRe
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-60" />
         
         {user.isPremium && (
-          <div className="absolute top-4 left-4 bg-accent/90 backdrop-blur-md text-white p-2 rounded-full shadow-lg animate-pulse">
-            <Crown size={16} />
+          <div className={cn("absolute bg-accent/90 backdrop-blur-md text-white rounded-full shadow-lg animate-pulse", compact ? "top-2 left-2 p-1" : "top-4 left-4 p-2")}>
+            <Crown size={compact ? 12 : 16} />
           </div>
         )}
 
         {distance !== null && (
-          <div className="absolute top-4 right-4 bg-black/40 backdrop-blur-md text-white px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-1">
-            <MapPin size={10} />
-            {distance} km away
+          <div className={cn("absolute bg-black/40 backdrop-blur-md text-white rounded-full font-bold flex items-center gap-1", compact ? "top-2 right-2 px-2 py-0.5 text-[8px]" : "top-4 right-4 px-3 py-1 text-[10px]")}>
+            <MapPin size={compact ? 8 : 10} />
+            {distance} km
           </div>
         )}
 
-        <div className="absolute bottom-6 left-6 right-6 text-white">
+        <div className={cn("absolute left-4 right-4 text-white", compact ? "bottom-3" : "bottom-6 left-6 right-6")}>
           <div className="flex items-center gap-2 mb-1">
-            <h3 className="text-xl font-bold">{user.name}, {user.age}</h3>
-            {user.isVerified && <ShieldCheck className="text-accent" size={18} />}
+            <h3 className={cn("font-bold truncate", compact ? "text-sm" : "text-xl")}>{user.name}, {user.age}</h3>
+            {user.isVerified && <ShieldCheck className="text-accent" size={compact ? 14 : 18} />}
           </div>
-          <p className="text-xs text-slate-300 flex items-center gap-1 mb-3">
-            <Search size={12} /> {user.location}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {user.interests.map(interest => (
-              <span key={interest} className="px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md text-[10px] font-medium">
-                {interest}
-              </span>
-            ))}
-          </div>
+          {!compact && (
+            <>
+              <p className="text-xs text-slate-300 flex items-center gap-1 mb-3">
+                <Search size={12} /> {user.location}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {user.interests.slice(0, 3).map(interest => (
+                  <span key={interest} className="px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md text-[10px] font-medium">
+                    {interest}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      <div className="p-4 flex justify-between items-center bg-inherit">
+      <div className={cn("flex justify-between items-center bg-inherit", compact ? "p-2 gap-2" : "p-4")}>
         <button 
           onClick={(e) => { e.stopPropagation(); onPass(); }}
-          className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
+          className={cn("rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90", compact ? "w-8 h-8" : "w-10 h-10")}
         >
-          <X size={20} />
+          <X size={compact ? 16 : 20} />
         </button>
-        <button 
-          onClick={(e) => { e.stopPropagation(); onReport(); }}
-          className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all active:scale-90"
-          title="Report User"
-        >
-          <Flag size={18} />
-        </button>
+        {!compact && (
+          <button 
+            onClick={(e) => { e.stopPropagation(); onReport(); }}
+            className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all active:scale-90"
+            title="Report User"
+          >
+            <Flag size={18} />
+          </button>
+        )}
         <button 
           onClick={(e) => { e.stopPropagation(); onMessage(); }}
-          className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all active:scale-90"
+          className={cn("rounded-full bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/20 hover:scale-105 transition-all active:scale-95", compact ? "w-8 h-8" : "w-10 h-10")}
         >
-          <MessageCircle size={20} />
+          <MessageCircle size={compact ? 16 : 20} />
         </button>
-        <button 
-          onClick={(e) => { e.stopPropagation(); onLike(); }}
-          className="w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-r from-primary to-secondary text-white shadow-lg shadow-primary/30 hover:scale-110 transition-all active:scale-90"
-        >
-          <Heart size={20} className="fill-current" />
-        </button>
+        {!compact && (
+          <button 
+            onClick={(e) => { e.stopPropagation(); onLike(); }}
+            className="w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-r from-primary to-secondary text-white shadow-lg shadow-primary/30 hover:scale-110 transition-all active:scale-90"
+          >
+            <Heart size={20} className="fill-current" />
+          </button>
+        )}
       </div>
     </motion.div>
   );
@@ -3373,9 +3394,12 @@ const SignupModal = ({ isOpen, onClose }: any) => {
               </div>
               <h3 className="text-2xl font-bold mb-2">Welcome Aboard!</h3>
               <p className="text-slate-500 text-sm mb-8">Your profile has been created successfully. We're setting everything up for you...</p>
-              <div className="flex justify-center">
-                <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-              </div>
+              <button 
+                onClick={onClose}
+                className="btn-primary px-8 py-3 rounded-full font-bold shadow-lg shadow-primary/20"
+              >
+                Get Started
+              </button>
             </motion.div>
           ) : (
             <>
@@ -4943,7 +4967,7 @@ function AppContent() {
                   </div>
                   <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar">
                     {profiles.slice(0, 5).map(p => (
-                      <div key={`top-${p.id}`} className="min-w-[200px] md:min-w-[240px]">
+                      <div key={`top-${p.id}`} className="min-w-[160px] md:min-w-[200px]">
                         <ProfileCard 
                           user={p} 
                           currentUserProfile={profile}
@@ -4952,6 +4976,7 @@ function AppContent() {
                           onMessage={() => handleMessage(p)}
                           onReport={() => setReportingUser(p)}
                           onClick={() => setSelectedProfile(p)}
+                          compact={true}
                         />
                       </div>
                     ))}

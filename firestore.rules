@@ -64,7 +64,14 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'name', 'age', 'gender', 'location', 'images', 'createdAt']) &&
-             data.keys().hasOnly(['id', 'uid', 'name', 'displayName', 'email', 'age', 'gender', 'lookingFor', 'location', 'bio', 'height', 'education', 'zodiac', 'images', 'interests', 'isVerified', 'isPremium', 'isOnline', 'lastSeen', 'createdAt', 'role', 'isBanned', 'isBlocked']) &&
+             data.keys().hasOnly([
+               'id', 'uid', 'name', 'displayName', 'email', 'age', 'gender', 'lookingFor', 
+               'location', 'bio', 'height', 'education', 'zodiac', 'images', 'interests', 
+               'isVerified', 'isPremium', 'isOnline', 'lastSeen', 'createdAt', 'role', 
+               'isBanned', 'isBlocked', 'smoking', 'drinking', 'relationshipGoal', 
+               'hobbies', 'latitude', 'longitude', 'preferredAgeMin', 'preferredAgeMax', 
+               'preferredDistance', 'preferredEducation', 'adminRights'
+             ]) &&
              data.uid is string &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
              data.age is number && data.age >= 18 && data.age <= 120 &&
@@ -72,16 +79,27 @@ service cloud.firestore {
              (!('lookingFor' in data) || (data.lookingFor is string && data.lookingFor.size() <= 50)) &&
              data.location is string && data.location.size() > 0 && data.location.size() <= 200 &&
              (!('bio' in data) || (data.bio is string && data.bio.size() <= 2000)) &&
-             (!('height' in data) || (data.height is string && data.height.size() <= 50)) &&
+             (!('height' in data) || (data.height is number || data.height is string)) &&
              (!('education' in data) || (data.education is string && data.education.size() <= 100)) &&
              (!('zodiac' in data) || (data.zodiac is string && data.zodiac.size() <= 50)) &&
              data.images is list && data.images.size() <= 15 &&
              (!('interests' in data) || (data.interests is list && data.interests.size() <= 50)) &&
+             (!('hobbies' in data) || (data.hobbies is list && data.hobbies.size() <= 50)) &&
              (!('isOnline' in data) || data.isOnline is bool) &&
              (!('lastSeen' in data) || data.lastSeen is timestamp) &&
              (!('role' in data) || data.role in ['user', 'admin']) &&
              (!('isBanned' in data) || data.isBanned is bool) &&
              (!('isBlocked' in data) || data.isBlocked is bool) &&
+             (!('latitude' in data) || data.latitude == null || data.latitude is number) &&
+             (!('longitude' in data) || data.longitude == null || data.longitude is number) &&
+             (!('preferredAgeMin' in data) || data.preferredAgeMin is number) &&
+             (!('preferredAgeMax' in data) || data.preferredAgeMax is number) &&
+             (!('preferredDistance' in data) || data.preferredDistance is number) &&
+             (!('preferredEducation' in data) || data.preferredEducation is list) &&
+             (!('smoking' in data) || data.smoking is string) &&
+             (!('drinking' in data) || data.drinking is string) &&
+             (!('relationshipGoal' in data) || data.relationshipGoal is string) &&
+             (!('adminRights' in data) || data.adminRights is map) &&
              data.createdAt is timestamp;
     }
 
