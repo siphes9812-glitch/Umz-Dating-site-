@@ -69,6 +69,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
+  sendEmailVerification,
   User as FirebaseUser 
 } from 'firebase/auth';
 import { 
@@ -357,7 +358,8 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setIsSigningIn(true);
     setSignInError(null);
     try {
-      await createUserWithEmailAndPassword(auth, email, pass);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+      await sendEmailVerification(userCredential.user);
     } catch (error: any) {
       setSignInError(error.message);
       throw error;
@@ -3249,6 +3251,13 @@ const SignupModal = ({ isOpen, onClose }: any) => {
       const reader = new FileReader();
       reader.onloadend = async () => {
         const compressed = await compressImage(reader.result as string);
+        
+        // Duplicate image prevention
+        if (formData.images.includes(compressed)) {
+          alert("This image has already been uploaded.");
+          return;
+        }
+
         setFormData(prev => ({
           ...prev,
           images: [...prev.images, compressed]
@@ -4108,6 +4117,13 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
       const reader = new FileReader();
       reader.onloadend = async () => {
         const compressed = await compressImage(reader.result as string);
+        
+        // Duplicate image prevention
+        if ((formData.images || []).includes(compressed)) {
+          alert("This image has already been uploaded.");
+          return;
+        }
+
         setFormData(prev => ({
           ...prev,
           images: [...(prev.images || []), compressed]
@@ -4759,6 +4775,46 @@ function AppContent() {
   }, [user, profile, loading, appSettings.registrationEnabled]);
 
   // Global Guards
+  if (user && !user.emailVerified && !isAdminUser) {
+    return (
+      <div className="fixed inset-0 z-[200] bg-white flex items-center justify-center p-6 text-center">
+        <div className="max-w-md">
+          <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Mail size={40} />
+          </div>
+          <h1 className="text-3xl font-bold text-slate-900 mb-4">Verify Your Email</h1>
+          <p className="text-slate-500 mb-8">
+            We've sent a verification email to <strong>{user.email}</strong>. Please check your inbox and click the link to confirm your account.
+          </p>
+          <div className="space-y-4">
+            <button 
+              onClick={() => window.location.reload()} 
+              className="btn-primary w-full py-4"
+            >
+              I've Verified My Email
+            </button>
+            <button 
+              onClick={async () => {
+                try {
+                  await sendEmailVerification(user);
+                  alert("Verification email resent!");
+                } catch (err: any) {
+                  alert(err.message);
+                }
+              }} 
+              className="text-primary font-bold text-sm hover:underline"
+            >
+              Resend Verification Email
+            </button>
+            <button onClick={logout} className="block w-full text-slate-400 text-sm hover:text-slate-600">
+              Logout
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (user && profile && (profile.isBanned || profile.isBlocked) && !isAdminUser) {
     return (
       <div className="fixed inset-0 z-[200] bg-white flex items-center justify-center p-6 text-center">
@@ -4822,35 +4878,30 @@ function AppContent() {
     // Remove from local list
     setProfiles(prev => prev.filter(p => p.id !== targetUser.id));
 
-    // Create a notification for the target user
     try {
-      await addDoc(collection(db, 'notifications'), {
-        userId: targetUser.id,
+      // 1. Save the like in a 'likes' collection
+      const likeId = `${user.uid}_${targetUser.id}`;
+      await setDoc(doc(db, 'likes', likeId), {
         fromUserId: user.uid,
-        type: 'like',
-        title: 'New Like!',
-        message: `${profile?.name || 'Someone'} liked your profile.`,
-        createdAt: serverTimestamp(),
-        read: false
+        toUserId: targetUser.id,
+        timestamp: serverTimestamp()
       });
-    } catch (err) {
-      console.error("Error creating notification", err);
-    }
 
-    // Randomly show match popup for demo or if it's a real match logic
-    // In a real app, we'd check if the other user already liked us
-    const matchChance = Math.random() > 0.3;
-    if (matchChance) {
-      setShowMatch(true);
-      
-      try {
+      // 2. Check if the other user has liked us
+      const reverseLikeId = `${targetUser.id}_${user.uid}`;
+      const reverseLikeDoc = await getDoc(doc(db, 'likes', reverseLikeId));
+
+      if (reverseLikeDoc.exists()) {
+        // It's a mutual match!
+        setShowMatch(true);
+        
         await addDoc(collection(db, 'matches'), {
           users: [user.uid, targetUser.id],
           timestamp: serverTimestamp(),
           typing: { [user.uid]: false, [targetUser.id]: false }
         });
 
-        // Also notify about the match
+        // Notify both users about the match
         await addDoc(collection(db, 'notifications'), {
           userId: targetUser.id,
           fromUserId: user.uid,
@@ -4860,9 +4911,20 @@ function AppContent() {
           createdAt: serverTimestamp(),
           read: false
         });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'matches');
+      } else {
+        // Just a regular like notification
+        await addDoc(collection(db, 'notifications'), {
+          userId: targetUser.id,
+          fromUserId: user.uid,
+          type: 'like',
+          title: 'New Like!',
+          message: `${profile?.name || 'Someone'} liked your profile.`,
+          createdAt: serverTimestamp(),
+          read: false
+        });
       }
+    } catch (err) {
+      console.error("Error handling like", err);
     }
   };
 
@@ -4887,21 +4949,10 @@ function AppContent() {
 
     if (existingMatch) {
       setSelectedMatchId(existingMatch.id);
+      setActiveTab('chat');
     } else {
-      // Create a match so they can chat (as requested: "be able to send messages")
-      try {
-        const newMatch = await addDoc(collection(db, 'matches'), {
-          users: [user.uid, targetUser.id],
-          timestamp: serverTimestamp(),
-          typing: { [user.uid]: false, [targetUser.id]: false }
-        });
-        setSelectedMatchId(newMatch.id);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'matches');
-      }
+      alert("You can only message users you have a mutual match with!");
     }
-    
-    setActiveTab('chat');
   };
 
   return (

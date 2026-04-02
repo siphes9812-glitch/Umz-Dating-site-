@@ -57,6 +57,7 @@ service cloud.firestore {
 
     function isNotRestricted() {
       return isAuthenticated() && 
+        request.auth.token.email_verified == true &&
         (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) || 
          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBanned', false) != true &&
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBlocked', false) != true));
@@ -163,10 +164,12 @@ service cloud.firestore {
 
     match /chats/{chatId}/messages/{messageId} {
       allow read: if isAdmin() || (isNotRestricted() && (
-        chatId.split('_').hasAny([request.auth.uid])
+        exists(/databases/$(database)/documents/matches/$(chatId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/matches/$(chatId)).data.users
       ));
       allow create: if isNotRestricted() && isValidMessage(request.resource.data) && (
-        chatId.split('_').hasAny([request.auth.uid])
+        exists(/databases/$(database)/documents/matches/$(chatId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/matches/$(chatId)).data.users
       );
       allow delete: if isAdmin() || (isNotRestricted() && resource.data.senderId == request.auth.uid);
     }
@@ -197,6 +200,14 @@ service cloud.firestore {
                       request.resource.data.reporterId == request.auth.uid &&
                       request.resource.data.status == 'pending';
       allow update, delete: if isAdmin();
+    }
+
+    match /likes/{likeId} {
+      allow read: if isAuthenticated() && (isAdmin() || likeId.split('_').hasAny([request.auth.uid]));
+      allow create: if isNotRestricted() && 
+                      likeId.split('_')[0] == request.auth.uid &&
+                      request.resource.data.fromUserId == request.auth.uid;
+      allow delete: if isAuthenticated() && likeId.split('_')[0] == request.auth.uid;
     }
 
     match /settings/{settingId} {
