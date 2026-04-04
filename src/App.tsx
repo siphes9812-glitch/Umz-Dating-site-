@@ -127,6 +127,18 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+    console.log("[Firebase] Connection test successful.");
+  } catch (error) {
+    if(error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration. The client is offline.");
+    }
+    // Skip logging for other errors, as this is simply a connection test.
+  }
+}
+
 const ErrorBoundary = ({ children }: { children: React.ReactNode }) => {
   const [hasError, setHasError] = useState(false);
   const [error, setError] = useState<any>(null);
@@ -5273,6 +5285,10 @@ const FilterModal = ({ isOpen, onClose, filters, setFilters, interests }: {
 // --- Main App ---
 
 export default function App() {
+  useEffect(() => {
+    testConnection();
+  }, []);
+
   return (
     <ErrorBoundary>
       <AuthProvider>
