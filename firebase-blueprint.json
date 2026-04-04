@@ -26,7 +26,8 @@
         "isPremium": { "type": "boolean", "description": "Whether the user has premium status" },
         "isOnline": { "type": "boolean", "description": "Current online status" },
         "lastSeen": { "type": "string", "format": "date-time", "description": "Last activity timestamp" },
-        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" },
+        "pushNotificationsEnabled": { "type": "boolean", "description": "Whether push notifications are enabled" }
       },
       "required": ["uid", "name", "age", "gender", "location", "images"]
     },

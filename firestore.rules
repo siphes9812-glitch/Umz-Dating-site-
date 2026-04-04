@@ -71,7 +71,7 @@ service cloud.firestore {
                'isVerified', 'verificationSelfie', 'verificationStatus', 'isPremium', 'isOnline', 'lastSeen', 'createdAt', 'role', 
                'isBanned', 'isBlocked', 'smoking', 'drinking', 'relationshipGoal', 
                'hobbies', 'latitude', 'longitude', 'preferredAgeMin', 'preferredAgeMax', 
-               'preferredDistance', 'preferredEducation', 'adminRights'
+               'preferredDistance', 'preferredEducation', 'adminRights', 'pushNotificationsEnabled'
              ]) &&
              data.uid is string &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
@@ -101,6 +101,7 @@ service cloud.firestore {
              (!('preferredAgeMax' in data) || data.preferredAgeMax is number) &&
              (!('preferredDistance' in data) || data.preferredDistance is number) &&
              (!('preferredEducation' in data) || data.preferredEducation is list) &&
+             (!('pushNotificationsEnabled' in data) || data.pushNotificationsEnabled is bool) &&
              (!('smoking' in data) || data.smoking is string) &&
              (!('drinking' in data) || data.drinking is string) &&
              (!('relationshipGoal' in data) || data.relationshipGoal is string) &&

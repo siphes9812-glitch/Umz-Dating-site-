@@ -40,6 +40,7 @@ export interface User {
   isBlocked?: boolean;
   isVerified: boolean;
   isPremium: boolean;
+  blockedUsers?: string[];
   isOnline?: boolean;
   lastSeen?: any;
   latitude?: number;
@@ -48,6 +49,7 @@ export interface User {
   preferredAgeMax?: number;
   preferredDistance?: number;
   preferredEducation?: string[];
+  pushNotificationsEnabled?: boolean;
 }
 
 export interface Notification {

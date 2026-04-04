@@ -70,6 +70,9 @@ import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
   sendEmailVerification,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
   User as FirebaseUser 
 } from 'firebase/auth';
 import { 
@@ -236,10 +239,12 @@ const AuthContext = createContext<{
   isSigningIn: boolean;
   signInError: string | null;
   signIn: () => Promise<void>;
-  login: (email: string, pass: string) => Promise<void>;
+  login: (email: string, pass: string, rememberMe?: boolean) => Promise<void>;
   register: (email: string, pass: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
+  sendVerification: () => Promise<void>;
+  clearError: () => void;
 } | null>(null);
 
 const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -324,44 +329,82 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, []);
 
-  const signIn = async () => {
-    if (isSigningIn) return;
+  const signIn = async (retryCount = 0) => {
+    if (isSigningIn && retryCount === 0) return;
     setIsSigningIn(true);
     setSignInError(null);
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
     } catch (error: any) {
+      if (error.code === 'auth/network-request-failed' && retryCount < 2) {
+        console.log(`Retrying Google sign in... attempt ${retryCount + 1}`);
+        await new Promise(r => setTimeout(r, 1000 * (retryCount + 1)));
+        return signIn(retryCount + 1);
+      }
+
       if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
         console.error("Sign in error", error);
-        setSignInError(error.message || "An error occurred during sign in.");
+        if (error.code === 'auth/network-request-failed') {
+          setSignInError("Network error: Please check your connection and try again.");
+        } else {
+          setSignInError(error.message || "An error occurred during sign in.");
+        }
       }
     } finally {
       setIsSigningIn(false);
     }
   };
 
-  const login = async (email: string, pass: string) => {
+  const login = async (email: string, pass: string, rememberMe: boolean = true, retryCount = 0) => {
     setIsSigningIn(true);
     setSignInError(null);
     try {
+      // Attempt to set persistence, but don't let it block the login if it fails
+      try {
+        await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
+      } catch (pErr) {
+        console.warn("Persistence could not be set:", pErr);
+      }
+      
       await signInWithEmailAndPassword(auth, email, pass);
     } catch (error: any) {
-      setSignInError(error.message);
+      // Automatic retry for network errors
+      if (error.code === 'auth/network-request-failed' && retryCount < 2) {
+        console.log(`Retrying login... attempt ${retryCount + 1}`);
+        await new Promise(r => setTimeout(r, 1000 * (retryCount + 1)));
+        return login(email, pass, rememberMe, retryCount + 1);
+      }
+
+      if (error.code === 'auth/network-request-failed') {
+        setSignInError("Network error: Please check your connection and try again.");
+      } else {
+        setSignInError(error.message);
+      }
       throw error;
     } finally {
       setIsSigningIn(false);
     }
   };
 
-  const register = async (email: string, pass: string) => {
+  const register = async (email: string, pass: string, retryCount = 0) => {
     setIsSigningIn(true);
     setSignInError(null);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
       await sendEmailVerification(userCredential.user);
     } catch (error: any) {
-      setSignInError(error.message);
+      if (error.code === 'auth/network-request-failed' && retryCount < 2) {
+        console.log(`Retrying registration... attempt ${retryCount + 1}`);
+        await new Promise(r => setTimeout(r, 1000 * (retryCount + 1)));
+        return register(email, pass, retryCount + 1);
+      }
+
+      if (error.code === 'auth/network-request-failed') {
+        setSignInError("Network error: Please check your connection and try again.");
+      } else {
+        setSignInError(error.message);
+      }
       throw error;
     } finally {
       setIsSigningIn(false);
@@ -392,10 +435,19 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
+  const sendVerification = async () => {
+    if (auth.currentUser) {
+      await sendEmailVerification(auth.currentUser);
+    }
+  };
+
+  const clearError = () => setSignInError(null);
+
   return (
     <AuthContext.Provider value={{ 
       user, profile, loading, isSigningIn, signInError, 
-      signIn, login, register, resetPassword, logout 
+      signIn, login, register, resetPassword, logout, sendVerification,
+      clearError
     }}>
       {children}
     </AuthContext.Provider>
@@ -2284,10 +2336,11 @@ const TermsModal = ({ isOpen, onClose, title, content }: { isOpen: boolean, onCl
 };
 
 const Hero = () => {
-  const { signIn, login, register, resetPassword, isSigningIn, signInError } = useAuth();
+  const { signIn, login, register, resetPassword, isSigningIn, signInError, clearError } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
@@ -2328,9 +2381,13 @@ const Hero = () => {
     setSuccessMsg(null);
     try {
       if (mode === 'signin') {
-        await login(email, password);
+        await login(email, password, rememberMe);
+        if (auth.currentUser && !auth.currentUser.emailVerified) {
+          setSuccessMsg("Welcome back! Please check your email to verify your account.");
+        }
       } else if (mode === 'signup') {
         await register(email, password);
+        setSuccessMsg("Account created! A verification email has been sent to your inbox.");
       } else {
         await resetPassword(email);
         setSuccessMsg("Password reset email sent! Check your inbox.");
@@ -2347,6 +2404,9 @@ const Hero = () => {
       return;
     }
     await signIn();
+    if (auth.currentUser && !auth.currentUser.emailVerified) {
+      setSuccessMsg("Welcome! Please check your email to verify your account.");
+    }
   };
 
   return (
@@ -2417,7 +2477,17 @@ const Hero = () => {
               )}
 
               {mode === 'signin' && (
-                <div className="text-right">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="checkbox" 
+                      id="rememberMe" 
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
+                    />
+                    <label htmlFor="rememberMe" className="text-xs text-slate-500 cursor-pointer">Remember Me</label>
+                  </div>
                   <button 
                     type="button"
                     onClick={() => setMode('forgot')}
@@ -2483,9 +2553,30 @@ const Hero = () => {
             )}
 
             {(signInError || localError) && (
-              <div className="mt-4 p-3 bg-red-500/10 border border-red-500/50 rounded-xl text-red-500 text-xs flex items-center gap-2">
-                <AlertCircle size={14} className="shrink-0" />
-                <span className="text-left">{localError || signInError}</span>
+              <div className="mt-4 p-3 bg-red-500/10 border border-red-500/50 rounded-xl text-red-500 text-xs flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={14} className="shrink-0" />
+                  <span className="text-left font-semibold">{localError || (signInError?.includes('network-request-failed') ? 'Connection Error' : 'Error')}</span>
+                </div>
+                <p className="text-left opacity-90">{localError || signInError}</p>
+                {signInError?.includes('network-request-failed') && (
+                  <div className="flex gap-2 mt-1">
+                    <button 
+                      type="button"
+                      onClick={() => { clearError(); handleSubmit(new Event('submit') as any); }}
+                      className="px-2 py-1 bg-red-500 text-white rounded text-[10px] font-bold hover:bg-red-600 transition-colors"
+                    >
+                      Try Again
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => window.location.reload()}
+                      className="px-2 py-1 border border-red-500 text-red-500 rounded text-[10px] font-bold hover:bg-red-500/10 transition-colors"
+                    >
+                      Refresh Page
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -2521,13 +2612,14 @@ const Hero = () => {
   );
 };
 
-const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onReport, onClick, compact = false }: { 
+const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onReport, onBlock, onClick, compact = false }: { 
   user: UserType, 
   currentUserProfile?: UserType | null, 
   onLike: () => void | Promise<void>, 
   onPass: () => void, 
   onMessage: () => void, 
   onReport: () => void, 
+  onBlock: () => void,
   onClick?: () => void, 
   key?: string,
   compact?: boolean
@@ -2572,20 +2664,22 @@ const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onRe
             <h3 className={cn("font-bold truncate", compact ? "text-sm" : "text-xl")}>{user.name}, {user.age}</h3>
             {user.isVerified && <ShieldCheck className="text-accent" size={compact ? 14 : 18} />}
           </div>
-          {!compact && (
-            <>
-              <p className="text-xs text-slate-300 flex items-center gap-1 mb-3">
-                <Search size={12} /> {user.location}
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {user.interests.slice(0, 3).map(interest => (
-                  <span key={interest} className="px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md text-[10px] font-medium">
-                    {interest}
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
+          <p className={cn("text-slate-300 flex items-center gap-1 mb-2", compact ? "text-[10px]" : "text-xs mb-3")}>
+            <Search size={compact ? 10 : 12} /> {user.location || 'Location not set'}
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {(user.interests || []).slice(0, compact ? 2 : 3).map(interest => (
+              <span 
+                key={interest} 
+                className={cn(
+                  "rounded-full bg-white/20 backdrop-blur-md font-medium",
+                  compact ? "px-1.5 py-0.5 text-[8px]" : "px-2.5 py-0.5 text-[10px]"
+                )}
+              >
+                {interest}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -2597,13 +2691,22 @@ const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onRe
           <X size={compact ? 16 : 20} />
         </button>
         {!compact && (
-          <button 
-            onClick={(e) => { e.stopPropagation(); onReport(); }}
-            className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all active:scale-90"
-            title="Report User"
-          >
-            <Flag size={18} />
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={(e) => { e.stopPropagation(); onReport(); }}
+              className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all active:scale-90"
+              title="Report User"
+            >
+              <Flag size={18} />
+            </button>
+            <button 
+              onClick={(e) => { e.stopPropagation(); onBlock(); }}
+              className="w-10 h-10 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 hover:bg-slate-900 hover:text-white transition-all active:scale-90"
+              title="Block User"
+            >
+              <ShieldAlert size={18} />
+            </button>
+          </div>
         )}
         <button 
           onClick={(e) => { e.stopPropagation(); onMessage(); }}
@@ -2624,7 +2727,7 @@ const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onRe
   );
 };
 
-const ProfileDetailModal = ({ user, currentUserProfile, onClose, onLike, onPass, onMessage, onReport }: { user: UserType, currentUserProfile?: UserType | null, onClose: () => void, onLike: () => void, onPass: () => void, onMessage: () => void, onReport: () => void }) => {
+const ProfileDetailModal = ({ user, currentUserProfile, onClose, onLike, onPass, onMessage, onReport, onBlock }: { user: UserType, currentUserProfile?: UserType | null, onClose: () => void, onLike: () => void, onPass: () => void, onMessage: () => void, onReport: () => void, onBlock: () => void }) => {
   const [activeImage, setActiveImage] = useState(0);
   const distance = (currentUserProfile?.latitude && currentUserProfile?.longitude && user.latitude && user.longitude)
     ? calculateDistance(currentUserProfile.latitude, currentUserProfile.longitude, user.latitude, user.longitude)
@@ -2701,7 +2804,7 @@ const ProfileDetailModal = ({ user, currentUserProfile, onClose, onLike, onPass,
             <div>
               <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Interests</h4>
               <div className="flex flex-wrap gap-2">
-                {user.interests.map(interest => (
+                {(user.interests || []).map(interest => (
                   <span key={interest} className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold uppercase tracking-wider">
                     {interest}
                   </span>
@@ -2716,12 +2819,29 @@ const ProfileDetailModal = ({ user, currentUserProfile, onClose, onLike, onPass,
           </div>
 
           <div className="flex gap-4 mt-8 pt-6 border-t">
-            <button 
-              onClick={onPass}
-              className="flex-1 h-14 rounded-2xl flex items-center justify-center border-2 border-slate-100 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
-            >
-              <X size={24} />
-            </button>
+            <div className="flex gap-2 w-full">
+              <button 
+                onClick={onPass}
+                className="flex-1 h-14 rounded-2xl flex items-center justify-center border-2 border-slate-100 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
+                title="Pass"
+              >
+                <X size={24} />
+              </button>
+              <button 
+                onClick={onReport}
+                className="flex-1 h-14 rounded-2xl flex items-center justify-center border-2 border-slate-100 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all"
+                title="Report User"
+              >
+                <Flag size={24} />
+              </button>
+              <button 
+                onClick={onBlock}
+                className="flex-1 h-14 rounded-2xl flex items-center justify-center border-2 border-slate-100 text-slate-400 hover:bg-slate-900 hover:text-white transition-all"
+                title="Block User"
+              >
+                <ShieldAlert size={24} />
+              </button>
+            </div>
             <button 
               onClick={onMessage}
               className="flex-1 h-14 rounded-2xl flex items-center justify-center border-2 border-slate-100 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
@@ -2742,10 +2862,11 @@ const ProfileDetailModal = ({ user, currentUserProfile, onClose, onLike, onPass,
   );
 };
 
-const Dashboard = ({ onSelectMatch }: { onSelectMatch: (matchId: string) => void }) => {
+const Dashboard = ({ onSelectMatch, profile }: { onSelectMatch: (matchId: string) => void, profile: UserType | null }) => {
   const { user } = useAuth();
   const [matches, setMatches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedMatch, setSelectedMatch] = useState<any | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -2756,16 +2877,20 @@ const Dashboard = ({ onSelectMatch }: { onSelectMatch: (matchId: string) => void
       limit(5)
     );
     const unsubscribe = onSnapshot(q, async (snap) => {
-      const matchesData = await Promise.all(snap.docs.map(async (matchDoc) => {
+      const matchesData = (await Promise.all(snap.docs.map(async (matchDoc) => {
         const data = matchDoc.data();
         const otherUserId = data.users.find((id: string) => id !== user.uid);
         const userDoc = await getDoc(doc(db, 'users', otherUserId));
         return {
           id: matchDoc.id,
-          otherUser: { id: otherUserId, ...userDoc.data() },
+          otherUser: { id: otherUserId, ...userDoc.data() } as UserType,
           ...data
         };
-      }));
+      }))).filter(m => {
+        if (profile?.blockedUsers?.includes(m.otherUser.id)) return false;
+        if (m.otherUser.blockedUsers?.includes(user.uid)) return false;
+        return true;
+      });
       setMatches(matchesData);
       setLoading(false);
     });
@@ -2856,43 +2981,134 @@ const Dashboard = ({ onSelectMatch }: { onSelectMatch: (matchId: string) => void
 
         <div className="p-8 rounded-3xl border bg-white border-black/5 shadow-sm">
           <h3 className="text-xl font-bold mb-6">Recent Matches</h3>
-          <div className="space-y-6">
-            {loading ? (
-              <div className="text-center py-10 text-slate-400 text-sm">Loading matches...</div>
-            ) : matches.length > 0 ? (
-              matches.map((match) => (
-                <div key={match.id} className="flex items-center justify-between group">
-                  <button 
-                    onClick={() => onSelectMatch(match.id)}
-                    className="flex items-center gap-3 flex-1 text-left"
-                  >
-                    <img src={match.otherUser.images?.[0] || `https://picsum.photos/seed/${match.otherUser.id}/100/100`} className="w-12 h-12 rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
-                    <div>
-                      <div className="font-bold text-sm">{match.otherUser.name}</div>
-                      <div className="text-[10px] text-slate-400">Matched {match.timestamp?.toDate ? formatDistanceToNow(match.timestamp.toDate()) : 'Recently'} ago</div>
-                    </div>
-                  </button>
-                  <button 
-                    onClick={() => deleteMatch(match.id)}
-                    className="p-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                    title="Delete Match"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+          
+          <AnimatePresence mode="wait">
+            {selectedMatch ? (
+              <motion.div
+                key="details"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-6"
+              >
+                <button 
+                  onClick={() => setSelectedMatch(null)}
+                  className="flex items-center gap-2 text-xs font-bold text-primary hover:underline mb-4"
+                >
+                  <ChevronLeft size={14} />
+                  Back to List
+                </button>
+
+                <div className="text-center">
+                  <div className="relative inline-block mb-4">
+                    <img 
+                      src={selectedMatch.otherUser.images?.[0] || `https://picsum.photos/seed/${selectedMatch.otherUser.id}/200/200`} 
+                      className="w-24 h-24 rounded-full object-cover border-4 border-primary/10 shadow-lg" 
+                      alt={selectedMatch.otherUser.name}
+                      referrerPolicy="no-referrer"
+                    />
+                    {selectedMatch.otherUser.isVerified && (
+                      <div className="absolute bottom-0 right-0 bg-white rounded-full p-1 shadow-md">
+                        <ShieldCheck size={16} className="text-primary" />
+                      </div>
+                    )}
+                  </div>
+                  <h4 className="text-lg font-bold">{selectedMatch.otherUser.name}, {selectedMatch.otherUser.age}</h4>
+                  <p className="text-xs text-slate-500 flex items-center justify-center gap-1 mt-1">
+                    <MapPin size={12} /> {selectedMatch.otherUser.location}
+                  </p>
                 </div>
-              ))
+
+                <div className="space-y-4">
+                  <div>
+                    <h5 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Mutual Interests</h5>
+                    <div className="flex flex-wrap gap-2">
+                      {(selectedMatch.otherUser.interests || []).filter((interest: string) => (profile?.interests || []).includes(interest)).map((interest: string) => (
+                        <span key={interest} className="px-3 py-1 rounded-lg bg-primary/10 text-primary text-[10px] font-bold flex items-center gap-1">
+                          <Sparkles size={10} />
+                          {interest}
+                        </span>
+                      ))}
+                      {(!selectedMatch.otherUser.interests || selectedMatch.otherUser.interests.filter((interest: string) => (profile?.interests || []).includes(interest)).length === 0) && (
+                        <p className="text-[10px] text-slate-400 italic">No mutual interests found.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {selectedMatch.otherUser.bio && (
+                    <div>
+                      <h5 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">About</h5>
+                      <p className="text-[10px] text-slate-600 leading-relaxed line-clamp-3">
+                        {selectedMatch.otherUser.bio}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="pt-4 flex gap-2">
+                    <button 
+                      onClick={() => onSelectMatch(selectedMatch.id)}
+                      className="flex-1 btn-primary py-3 text-xs font-bold flex items-center justify-center gap-2"
+                    >
+                      <MessageSquare size={14} />
+                      Message
+                    </button>
+                    <button 
+                      onClick={() => deleteMatch(selectedMatch.id)}
+                      className="p-3 rounded-xl border border-red-100 text-red-500 hover:bg-red-50 transition-colors"
+                      title="Unmatch"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
             ) : (
-              <div className="text-center py-10 text-slate-400 text-sm italic">
-                No recent matches to show.
-              </div>
+              <motion.div
+                key="list"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className="space-y-6"
+              >
+                {loading ? (
+                  <div className="text-center py-10 text-slate-400 text-sm">Loading matches...</div>
+                ) : matches.length > 0 ? (
+                  matches.map((match) => (
+                    <div key={match.id} className="flex items-center justify-between group">
+                      <button 
+                        onClick={() => setSelectedMatch(match)}
+                        className="flex items-center gap-3 flex-1 text-left"
+                      >
+                        <img src={match.otherUser.images?.[0] || `https://picsum.photos/seed/${match.otherUser.id}/100/100`} className="w-12 h-12 rounded-full object-cover" alt="" referrerPolicy="no-referrer" />
+                        <div>
+                          <div className="font-bold text-sm">{match.otherUser.name}</div>
+                          <div className="text-[10px] text-slate-400">Matched {match.timestamp?.toDate ? formatDistanceToNow(match.timestamp.toDate()) : 'Recently'} ago</div>
+                        </div>
+                      </button>
+                      <button 
+                        onClick={() => deleteMatch(match.id)}
+                        className="p-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                        title="Delete Match"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-10 text-slate-400 text-sm italic">
+                    No recent matches to show.
+                  </div>
+                )}
+                
+                <button 
+                  onClick={() => onSelectMatch('')}
+                  className="w-full mt-8 py-3 rounded-xl border border-primary/20 text-primary font-semibold hover:bg-primary/5 transition-all"
+                >
+                  View All Matches
+                </button>
+              </motion.div>
             )}
-          </div>
-          <button 
-            onClick={() => onSelectMatch('')}
-            className="w-full mt-8 py-3 rounded-xl border border-primary/20 text-primary font-semibold hover:bg-primary/5 transition-all"
-          >
-            View All Matches
-          </button>
+          </AnimatePresence>
         </div>
       </div>
     </div>
@@ -2963,16 +3179,20 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
     );
 
     const unsubscribe = onSnapshot(q, async (snap) => {
-      const matchesData = await Promise.all(snap.docs.map(async (matchDoc) => {
+      const matchesData = (await Promise.all(snap.docs.map(async (matchDoc) => {
         const data = matchDoc.data();
         const otherUserId = data.users.find((id: string) => id !== user.uid);
         const userDoc = await getDoc(doc(db, 'users', otherUserId));
         return {
           id: matchDoc.id,
-          otherUser: { id: otherUserId, ...userDoc.data() },
+          otherUser: { id: otherUserId, ...userDoc.data() } as UserType,
           ...data
         };
-      }));
+      }))).filter(m => {
+        if (profile?.blockedUsers?.includes(m.otherUser.id)) return false;
+        if (m.otherUser.blockedUsers?.includes(user.uid)) return false;
+        return true;
+      });
       setMatches(matchesData);
       if (matchesData.length > 0 && !selectedMatchId) {
         setSelectedMatchId(matchesData[0].id);
@@ -3416,7 +3636,7 @@ const CameraModal = ({ isOpen, onClose, onCapture }: { isOpen: boolean, onClose:
 
 const SignupModal = ({ isOpen, onClose }: any) => {
   const [step, setStep] = useState(1);
-  const totalSteps = 8;
+  const totalSteps = 7;
   const [formData, setFormData] = useState({ 
     name: '', 
     age: '', 
@@ -3441,21 +3661,6 @@ const SignupModal = ({ isOpen, onClose }: any) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGeneratingBio, setIsGeneratingBio] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
-
-  useEffect(() => {
-    if (isOpen && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setFormData(prev => ({
-            ...prev,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude
-          }));
-        },
-        (error) => console.error("Geolocation error:", error)
-      );
-    }
-  }, [isOpen]);
 
   const handleAiBio = async () => {
     if (formData.hobbies.length === 0) {
@@ -3628,8 +3833,7 @@ const SignupModal = ({ isOpen, onClose }: any) => {
     if (step === 4) return formData.smoking && formData.drinking && formData.relationshipGoal;
     if (step === 5) return formData.bio && formData.hobbies.length >= 3;
     if (step === 6) return formData.images.length >= 2;
-    if (step === 7) return formData.latitude && formData.longitude;
-    if (step === 8) return formData.preferredAgeMin && formData.preferredAgeMax && formData.preferredDistance;
+    if (step === 7) return formData.preferredAgeMin && formData.preferredAgeMax && formData.preferredDistance;
     return true;
   };
 
@@ -3671,7 +3875,7 @@ const SignupModal = ({ isOpen, onClose }: any) => {
           ) : (
             <>
               <div className="flex gap-2 mb-8">
-                {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                {[1, 2, 3, 4, 5, 6, 7].map(s => (
                   <div key={s} className={cn("h-1.5 flex-1 rounded-full transition-all duration-500", s <= step ? "bg-primary" : "bg-slate-100")} />
                 ))}
               </div>
@@ -3970,60 +4174,6 @@ const SignupModal = ({ isOpen, onClose }: any) => {
             {step === 7 && (
               <motion.div
                 key="step7"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-              >
-                <h3 className="text-2xl font-bold mb-2">Your Location</h3>
-                <p className="text-slate-500 text-sm mb-8">We use your location to find matches nearby.</p>
-                
-                <div className="space-y-6">
-                  <div className="flex flex-col items-center justify-center p-10 rounded-[32px] border-2 border-dashed border-slate-100 bg-slate-50/50 text-center">
-                    <div className={cn(
-                      "w-20 h-20 rounded-full flex items-center justify-center mb-6 transition-all duration-500",
-                      formData.latitude ? "bg-green-100 text-green-600" : "bg-primary/10 text-primary animate-pulse"
-                    )}>
-                      <MapPin size={40} />
-                    </div>
-                    <h4 className="text-lg font-bold mb-2">
-                      {formData.latitude ? "Location Captured!" : "Enable Location Access"}
-                    </h4>
-                    <p className="text-xs text-slate-500 mb-8 max-w-[240px]">
-                      {formData.latitude 
-                        ? "Great! We've found your coordinates. You can now proceed to set your matching preferences." 
-                        : "To show you people in your area, we need to know where you are. Please click the button below to share your location."}
-                    </p>
-                    
-                    {!formData.latitude ? (
-                      <button 
-                        onClick={() => {
-                          if (navigator.geolocation) {
-                            navigator.geolocation.getCurrentPosition(
-                              (pos) => setFormData(prev => ({ ...prev, latitude: pos.coords.latitude, longitude: pos.coords.longitude })),
-                              (err) => alert("Please enable location permissions in your browser settings to continue.")
-                            );
-                          } else {
-                            alert("Geolocation is not supported by your browser.");
-                          }
-                        }}
-                        className="btn-primary px-10 py-4 shadow-xl shadow-primary/20"
-                      >
-                        Find My Location
-                      </button>
-                    ) : (
-                      <div className="flex items-center gap-2 text-[10px] font-bold text-green-600 uppercase tracking-widest">
-                        <CheckCircle2 size={16} />
-                        Ready to continue
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {step === 8 && (
-              <motion.div
-                key="step8"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
@@ -4452,6 +4602,65 @@ const ProfileView = () => {
               </div>
 
               <div className="p-6 rounded-3xl bg-slate-50 border border-slate-100">
+                <div className="flex items-center gap-2 mb-4">
+                  <Bell size={18} className="text-primary" />
+                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Notification Settings</h4>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-slate-900">Push Notifications</p>
+                      <p className="text-[10px] text-slate-500">Get alerts for matches and messages</p>
+                    </div>
+                    <button 
+                      onClick={async () => {
+                        if (!('Notification' in window)) {
+                          alert("This browser does not support desktop notifications");
+                          return;
+                        }
+
+                        if (Notification.permission === 'denied') {
+                          alert("Notifications are blocked. Please enable them in your browser settings.");
+                          return;
+                        }
+
+                        if (Notification.permission === 'default') {
+                          const permission = await Notification.requestPermission();
+                          if (permission !== 'granted') return;
+                        }
+
+                        // Toggle the preference in Firestore
+                        try {
+                          await updateDoc(doc(db, 'users', profile.uid), {
+                            pushNotificationsEnabled: !profile.pushNotificationsEnabled
+                          });
+                        } catch (err) {
+                          handleFirestoreError(err, OperationType.UPDATE, `users/${profile.uid}`);
+                        }
+                      }}
+                      className={cn(
+                        "w-12 h-6 rounded-full transition-all relative",
+                        profile.pushNotificationsEnabled ? "bg-primary" : "bg-slate-300"
+                      )}
+                    >
+                      <motion.div 
+                        animate={{ x: profile.pushNotificationsEnabled ? 24 : 4 }}
+                        className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                      />
+                    </button>
+                  </div>
+                  
+                  {Notification.permission === 'denied' && (
+                    <p className="text-[10px] text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-100 flex items-center gap-2">
+                      <AlertCircle size={12} />
+                      Notifications are blocked by your browser.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-6 rounded-3xl bg-slate-50 border border-slate-100">
                 <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">Legal</h4>
                 <div className="space-y-3">
                   <button 
@@ -4813,6 +5022,43 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
           </div>
 
           <div className="pt-6 border-t space-y-6">
+            <h4 className="text-sm font-bold text-slate-900">Notification Settings</h4>
+            <div className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 border border-slate-100">
+              <div>
+                <p className="text-sm font-bold text-slate-900">Push Notifications</p>
+                <p className="text-[10px] text-slate-500">Enable browser alerts for new matches and messages</p>
+              </div>
+              <button 
+                type="button"
+                onClick={async () => {
+                  if (!('Notification' in window)) {
+                    alert("This browser does not support desktop notifications");
+                    return;
+                  }
+                  if (Notification.permission === 'denied') {
+                    alert("Notifications are blocked. Please enable them in your browser settings.");
+                    return;
+                  }
+                  if (Notification.permission === 'default') {
+                    const permission = await Notification.requestPermission();
+                    if (permission !== 'granted') return;
+                  }
+                  setFormData({ ...formData, pushNotificationsEnabled: !formData.pushNotificationsEnabled });
+                }}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative",
+                  formData.pushNotificationsEnabled ? "bg-primary" : "bg-slate-300"
+                )}
+              >
+                <motion.div 
+                  animate={{ x: formData.pushNotificationsEnabled ? 24 : 4 }}
+                  className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="pt-6 border-t space-y-6">
             <h4 className="text-sm font-bold text-slate-900">Matching Preferences</h4>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -4998,12 +5244,25 @@ const FilterModal = ({ isOpen, onClose, filters, setFilters, interests }: {
           </div>
         </div>
 
-        <div className="p-8 bg-slate-50 border-t">
+        <div className="p-8 bg-slate-50 border-t flex flex-col gap-3">
           <button 
             onClick={onClose}
             className="w-full btn-primary py-4 font-bold shadow-lg shadow-primary/20"
           >
             Apply Filters
+          </button>
+          <button 
+            onClick={() => {
+              setFilters({
+                ageRange: [18, 100],
+                maxDistance: 100,
+                interests: [],
+                showTopPicks: false
+              });
+            }}
+            className="w-full py-3 text-slate-500 font-bold hover:text-slate-700 transition-colors text-sm"
+          >
+            Clear All Filters
           </button>
         </div>
       </motion.div>
@@ -5023,12 +5282,57 @@ export default function App() {
   );
 }
 
+const usePushNotifications = (user: FirebaseUser | null, profile: UserType | null) => {
+  useEffect(() => {
+    if (!user || !profile || !('Notification' in window)) return;
+    if (!profile.pushNotificationsEnabled) return;
+
+    if (Notification.permission === 'default') {
+      // We don't request here automatically to avoid annoying the user
+      // unless they explicitly enabled it in settings
+      return;
+    }
+
+    const q = query(
+      collection(db, 'notifications'),
+      where('userId', '==', user.uid),
+      where('read', '==', false),
+      orderBy('createdAt', 'desc'),
+      limit(1)
+    );
+
+    let isInitialLoad = true;
+    const unsubscribe = onSnapshot(q, (snap) => {
+      if (isInitialLoad) {
+        isInitialLoad = false;
+        return;
+      }
+
+      snap.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const notification = change.doc.data();
+          if (Notification.permission === 'granted') {
+            new Notification(notification.title || 'New Notification', {
+              body: notification.message,
+              icon: '/favicon.ico',
+            });
+          }
+        }
+      });
+    });
+
+    return () => unsubscribe();
+  }, [user, profile]);
+};
+
 function AppContent() {
   const [activeTab, setActiveTab] = useState('home');
   const [showMatch, setShowMatch] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState<UserType | null>(null);
   const [profiles, setProfiles] = useState<UserType[]>([]);
+  const [myLikes, setMyLikes] = useState<string[]>([]);
+  const [discoveryLoading, setDiscoveryLoading] = useState(true);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [reportingUser, setReportingUser] = useState<UserType | null>(null);
@@ -5044,8 +5348,13 @@ function AppContent() {
     registrationEnabled: true,
     premiumOnly: false
   });
-  const { user, profile, loading, isSigningIn, signInError, signIn, logout } = useAuth();
+  const { user, profile, loading, isSigningIn, signInError, signIn, logout, sendVerification } = useAuth();
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
   const isAdminUser = profile?.role === 'admin' || user?.email === 'siphes9812@gmail.com';
+
+  // Initialize push notifications
+  usePushNotifications(user, profile);
 
   if (appSettings.maintenanceMode && !isAdminUser && !loading) {
     return (
@@ -5123,6 +5432,18 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    console.log("[Discovery] My Profile:", profile);
+  }, [profile]);
+
+  useEffect(() => {
+    console.log("[Discovery] Current profiles in state:", profiles.length);
+  }, [profiles]);
+
+  useEffect(() => {
+    console.log("[Discovery] My Likes:", myLikes);
+  }, [myLikes]);
+
+  useEffect(() => {
     // If user is signed in and on home, redirect to discover
     if (user && activeTab === 'home') {
       setActiveTab('discover');
@@ -5131,78 +5452,132 @@ function AppContent() {
 
   useEffect(() => {
     if (!user) {
+      setMyLikes([]);
+      return;
+    }
+    const q = query(collection(db, 'likes'), where('fromUserId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setMyLikes(snap.docs.map(doc => doc.data().toUserId));
+    }, (err) => {
+      console.error("Error fetching likes:", err);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
       setProfiles([]);
+      setDiscoveryLoading(false);
       return;
     }
 
-    const q = query(collection(db, 'users'), limit(50));
+    setDiscoveryLoading(true);
+    console.log("[Discovery] Subscribing to users...");
+    const q = query(collection(db, 'users'), limit(200));
     const unsubscribe = onSnapshot(q, (snap) => {
+      console.log(`[Discovery] Fetched ${snap.docs.length} users from DB`);
       const fetched = snap.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as UserType))
         .filter(p => {
           if (p.id === user?.uid) return false;
-          if (p.isBanned || p.isBlocked) return false;
+          if (p.isBanned || p.isBlocked) {
+            console.log(`[Discovery] Filtered ${p.name} (Banned/Blocked)`);
+            return false;
+          }
           if (p.role === 'admin') return false;
+          
+          // Filter out already liked users
+          if (myLikes.includes(p.id)) {
+            console.log(`[Discovery] Filtered ${p.name} (Already Liked)`);
+            return false;
+          }
+
           if (!profile) return true;
 
-          const myGender = profile.gender;
-          const myLookingFor = profile.lookingFor; // 'Men', 'Women', 'Both'
-          const theirGender = p.gender;
-          const theirLookingFor = p.lookingFor;
+          // Blocked users
+          if (profile.blockedUsers?.includes(p.id)) return false;
+          if (p.blockedUsers?.includes(user.uid)) return false;
 
-          const iAmInterested = (myLookingFor === 'Both') || 
-                                (myLookingFor === 'Women' && theirGender === 'female') || 
-                                (myLookingFor === 'Men' && theirGender === 'male');
-          
-          const theyAreInterested = (theirLookingFor === 'Both') || 
-                                    (theirLookingFor === 'Women' && myGender === 'female') || 
-                                    (theirLookingFor === 'Men' && myGender === 'male');
+          const myGender = profile.gender?.toLowerCase();
+          const myLookingFor = profile.lookingFor?.toLowerCase(); // 'men', 'women', 'both'
+          const theirGender = p.gender?.toLowerCase();
+          const theirLookingFor = p.lookingFor?.toLowerCase();
 
-          if (!iAmInterested || !theyAreInterested) return false;
+          // Mutual Interest Check (Only if both profiles have gender/lookingFor set)
+          if (myGender && myLookingFor && theirGender && theirLookingFor) {
+            const iAmInterested = (myLookingFor === 'both') || 
+                                  (myLookingFor === 'women' && theirGender === 'female') || 
+                                  (myLookingFor === 'men' && theirGender === 'male');
+            
+            const theyAreInterested = (theirLookingFor === 'both') || 
+                                      (theirLookingFor === 'women' && myGender === 'female') || 
+                                      (theirLookingFor === 'men' && myGender === 'male');
+
+            if (!iAmInterested || !theyAreInterested) {
+              console.log(`[Discovery] Filtered ${p.name} (Mutual Interest: iAmInterested=${iAmInterested}, theyAreInterested=${theyAreInterested}, myGender=${myGender}, myLookingFor=${myLookingFor}, theirGender=${theirGender}, theirLookingFor=${theirLookingFor})`);
+              return false;
+            }
+          }
 
           // Advanced Filtering
           
           // 1. Age Preference
           const minAge = filters.ageRange[0];
           const maxAge = filters.ageRange[1];
-          if (p.age < minAge || p.age > maxAge) return false;
+          if (p.age && (p.age < minAge || p.age > maxAge)) {
+            console.log(`[Discovery] Filtered ${p.name} (Age: ${p.age} not in ${minAge}-${maxAge})`);
+            return false;
+          }
 
           // 2. Distance Preference
           const maxDist = filters.maxDistance;
           if (profile.latitude && profile.longitude && p.latitude && p.longitude) {
             const dist = calculateDistance(profile.latitude, profile.longitude, p.latitude, p.longitude);
-            if (dist > maxDist) return false;
+            if (dist > maxDist) {
+              console.log(`[Discovery] Filtered ${p.name} (Distance: ${dist.toFixed(1)}km > ${maxDist}km)`);
+              return false;
+            }
           }
 
           // 3. Interests Filter
           if (filters.interests.length > 0) {
             const hasCommonInterest = filters.interests.some(i => p.interests?.includes(i));
-            if (!hasCommonInterest) return false;
+            if (!hasCommonInterest) {
+              console.log(`[Discovery] Filtered ${p.name} (No common interests)`);
+              return false;
+            }
           }
 
           // 4. Education Preference
           if (profile.preferredEducation && profile.preferredEducation.length > 0) {
-            if (!p.education || !profile.preferredEducation.includes(p.education)) return false;
+            if (p.education && !profile.preferredEducation.includes(p.education)) {
+              console.log(`[Discovery] Filtered ${p.name} (Education mismatch)`);
+              return false;
+            }
           }
 
           return true;
         });
       
+      console.log(`[Discovery] Final profiles count: ${fetched.length}`);
       if (fetched.length > 0) {
         setProfiles(fetched);
       } else {
         setProfiles([]);
       }
+      setDiscoveryLoading(false);
     }, (err) => {
+      console.error("[Discovery] Error fetching users:", err);
       if (err.code === 'permission-denied') {
         setProfiles([]);
       } else {
         handleFirestoreError(err, OperationType.LIST, 'users');
       }
+      setDiscoveryLoading(false);
     });
 
     return () => unsubscribe();
-  }, [user, profile, filters]);
+  }, [user, profile, filters, myLikes]);
 
   useEffect(() => {
     if (!user) {
@@ -5253,6 +5628,21 @@ function AppContent() {
           <p className="text-slate-500 mb-8">
             We've sent a verification email to <strong>{user.email}</strong>. Please check your inbox and click the link to confirm your account.
           </p>
+          
+          {verificationSent && (
+            <div className="mb-6 p-3 bg-green-50 text-green-600 rounded-xl text-xs font-bold border border-green-100 flex items-center gap-2 justify-center">
+              <CheckCircle2 size={14} />
+              Verification email resent!
+            </div>
+          )}
+
+          {verificationError && (
+            <div className="mb-6 p-3 bg-red-50 text-red-600 rounded-xl text-xs font-bold border border-red-100 flex items-center gap-2 justify-center">
+              <AlertCircle size={14} />
+              {verificationError}
+            </div>
+          )}
+
           <div className="space-y-4">
             <button 
               onClick={() => window.location.reload()} 
@@ -5262,11 +5652,13 @@ function AppContent() {
             </button>
             <button 
               onClick={async () => {
+                setVerificationSent(false);
+                setVerificationError(null);
                 try {
-                  await sendEmailVerification(user);
-                  alert("Verification email resent!");
+                  await sendVerification();
+                  setVerificationSent(true);
                 } catch (err: any) {
-                  alert(err.message);
+                  setVerificationError(err.message);
                 }
               }} 
               className="text-primary font-bold text-sm hover:underline"
@@ -5399,6 +5791,42 @@ function AppContent() {
     setProfiles(prev => prev.filter(p => p.id !== targetUser.id));
   };
 
+  const handleBlock = async (targetUser: UserType) => {
+    if (!user || !profile) return;
+    
+    if (!window.confirm(`Are you sure you want to block ${targetUser.name}? This will prevent all future interactions.`)) {
+      return;
+    }
+
+    try {
+      const userDoc = doc(db, 'users', user.uid);
+      const currentBlocked = profile.blockedUsers || [];
+      if (!currentBlocked.includes(targetUser.id)) {
+        await updateDoc(userDoc, {
+          blockedUsers: [...currentBlocked, targetUser.id]
+        });
+      }
+      
+      // Also remove any existing matches
+      const q = query(
+        collection(db, 'matches'),
+        where('users', 'array-contains', user.uid)
+      );
+      const snap = await getDocs(q);
+      const matchToDelete = snap.docs.find(doc => doc.data().users.includes(targetUser.id));
+      if (matchToDelete) {
+        await deleteDoc(doc(db, 'matches', matchToDelete.id));
+      }
+
+      setProfiles(prev => prev.filter(p => p.id !== targetUser.id));
+      setSelectedProfile(null);
+      alert(`${targetUser.name} has been blocked.`);
+    } catch (err) {
+      console.error("Error blocking user", err);
+      handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+    }
+  };
+
   const handleMessage = async (targetUser: UserType) => {
     if (!user) {
       signIn();
@@ -5493,6 +5921,7 @@ function AppContent() {
                           onPass={() => handlePass(p)}
                           onMessage={() => handleMessage(p)}
                           onReport={() => setReportingUser(p)}
+                          onBlock={() => handleBlock(p)}
                           onClick={() => setSelectedProfile(p)}
                           compact={true}
                         />
@@ -5512,16 +5941,33 @@ function AppContent() {
                     onPass={() => handlePass(p)}
                     onMessage={() => handleMessage(p)}
                     onReport={() => setReportingUser(p)}
+                    onBlock={() => handleBlock(p)}
                     onClick={() => setSelectedProfile(p)}
                   />
                 ))}
-                {profiles.length === 0 && (
+                {discoveryLoading ? (
+                  <div className="col-span-full py-20 text-center">
+                    <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-slate-500">Finding matches for you...</p>
+                  </div>
+                ) : profiles.length === 0 && (
                   <div className="col-span-full py-20 text-center">
                     <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                       <Search className="text-slate-300" size={32} />
                     </div>
                     <h3 className="text-xl font-bold text-slate-700">No more profiles</h3>
-                    <p className="text-slate-500">Check back later for more people in your area!</p>
+                    <p className="text-slate-500 mb-6">Check back later for more people in your area!</p>
+                    <button 
+                      onClick={() => setFilters({
+                        ageRange: [18, 100],
+                        maxDistance: 500,
+                        interests: [],
+                        showTopPicks: false
+                      })}
+                      className="px-6 py-2 bg-primary text-white rounded-full font-bold hover:bg-primary-hover transition-colors"
+                    >
+                      Reset Filters
+                    </button>
                   </div>
                 )}
               </div>
@@ -5561,10 +6007,13 @@ function AppContent() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
-              <Dashboard onSelectMatch={(id) => {
-                if (id) setSelectedMatchId(id);
-                setActiveTab('chat');
-              }} />
+              <Dashboard 
+                profile={profile}
+                onSelectMatch={(id) => {
+                  if (id) setSelectedMatchId(id);
+                  setActiveTab('chat');
+                }} 
+              />
             </motion.div>
           )}
 
@@ -5603,6 +6052,7 @@ function AppContent() {
             onPass={() => { handlePass(selectedProfile); setSelectedProfile(null); }}
             onMessage={() => { handleMessage(selectedProfile); setSelectedProfile(null); }}
             onReport={() => { setReportingUser(selectedProfile); setSelectedProfile(null); }}
+            onBlock={() => { handleBlock(selectedProfile); setSelectedProfile(null); }}
           />
         )}
       </AnimatePresence>
