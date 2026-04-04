@@ -21,6 +21,8 @@
         "images": { "type": "array", "items": { "type": "string" }, "description": "Gallery of profile images (min 2)" },
         "interests": { "type": "array", "items": { "type": "string" }, "description": "List of interests" },
         "isVerified": { "type": "boolean", "description": "Whether the user is verified" },
+        "verificationSelfie": { "type": "string", "description": "URL of the selfie uploaded for verification" },
+        "verificationStatus": { "type": "string", "enum": ["none", "pending", "approved", "rejected"], "description": "Status of the identity verification" },
         "isPremium": { "type": "boolean", "description": "Whether the user has premium status" },
         "isOnline": { "type": "boolean", "description": "Current online status" },
         "lastSeen": { "type": "string", "format": "date-time", "description": "Last activity timestamp" },

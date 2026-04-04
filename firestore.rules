@@ -68,7 +68,7 @@ service cloud.firestore {
              data.keys().hasOnly([
                'id', 'uid', 'name', 'displayName', 'email', 'age', 'gender', 'lookingFor', 
                'location', 'bio', 'height', 'education', 'zodiac', 'images', 'interests', 
-               'isVerified', 'isPremium', 'isOnline', 'lastSeen', 'createdAt', 'role', 
+               'isVerified', 'verificationSelfie', 'verificationStatus', 'isPremium', 'isOnline', 'lastSeen', 'createdAt', 'role', 
                'isBanned', 'isBlocked', 'smoking', 'drinking', 'relationshipGoal', 
                'hobbies', 'latitude', 'longitude', 'preferredAgeMin', 'preferredAgeMax', 
                'preferredDistance', 'preferredEducation', 'adminRights'
@@ -87,6 +87,10 @@ service cloud.firestore {
              (!('interests' in data) || (data.interests is list && data.interests.size() <= 50)) &&
              (!('hobbies' in data) || (data.hobbies is list && data.hobbies.size() <= 50)) &&
              (!('isOnline' in data) || data.isOnline is bool) &&
+             (!('isVerified' in data) || data.isVerified is bool) &&
+             (!('verificationSelfie' in data) || data.verificationSelfie is string) &&
+             (!('verificationStatus' in data) || data.verificationStatus in ['none', 'pending', 'approved', 'rejected']) &&
+             (!('isPremium' in data) || data.isPremium is bool) &&
              (!('lastSeen' in data) || data.lastSeen is timestamp) &&
              (!('role' in data) || data.role in ['user', 'admin']) &&
              (!('isBanned' in data) || data.isBanned is bool) &&
@@ -151,6 +155,9 @@ service cloud.firestore {
                        (!('isBanned' in request.resource.data) || request.resource.data.isBanned == resource.data.isBanned) &&
                        (!('isBlocked' in request.resource.data) || request.resource.data.isBlocked == resource.data.isBlocked) &&
                        (!('isVerified' in request.resource.data) || request.resource.data.isVerified == resource.data.isVerified) &&
+                       (!('verificationStatus' in request.resource.data) || 
+                         request.resource.data.verificationStatus == resource.data.get('verificationStatus', 'none') || 
+                         request.resource.data.verificationStatus == 'pending') &&
                        (!('isPremium' in request.resource.data) || request.resource.data.isPremium == resource.data.isPremium)));
       allow delete: if isAdmin();
     }

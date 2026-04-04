@@ -938,7 +938,23 @@ const AdminDashboard = () => {
 
   const verifyUser = async (userId: string) => {
     try {
-      await updateDoc(doc(db, 'users', userId), { isVerified: true });
+      await updateDoc(doc(db, 'users', userId), { 
+        isVerified: true,
+        verificationStatus: 'approved'
+      });
+      alert("User verified successfully!");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+    }
+  };
+
+  const rejectVerification = async (userId: string) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), { 
+        verificationStatus: 'rejected',
+        verificationSelfie: null
+      });
+      alert("Verification request rejected.");
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
     }
@@ -1379,11 +1395,14 @@ const AdminDashboard = () => {
                 </tr>
               </thead>
               <tbody>
-                {users.filter(u => !u.isVerified).slice(0, 5).map(u => (
+                {users.filter(u => u.verificationStatus === 'pending').map(u => (
                   <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
                     <td className="p-4 flex items-center gap-3">
-                      <img src={u.images?.[0]} className="w-8 h-8 rounded-full object-cover" alt="" />
-                      <span className="text-sm font-bold">{u.name}</span>
+                      <img src={u.verificationSelfie} className="w-12 h-12 rounded-xl object-cover border-2 border-white shadow-sm" alt="Selfie" />
+                      <div>
+                        <span className="text-sm font-bold block">{u.name}</span>
+                        <span className="text-[10px] text-slate-400">Verification Selfie</span>
+                      </div>
                     </td>
                     <td className="p-4 text-xs text-slate-500">
                       {u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : 'Today'}
@@ -1394,19 +1413,25 @@ const AdminDashboard = () => {
                           onClick={() => setEditingUser(u)}
                           className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase hover:bg-slate-200"
                         >
-                          Review
+                          View Profile
+                        </button>
+                        <button 
+                          onClick={() => rejectVerification(u.id)}
+                          className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold uppercase hover:bg-red-100"
+                        >
+                          Reject
                         </button>
                         <button 
                           onClick={() => verifyUser(u.id)}
                           className="px-3 py-1 bg-primary text-white rounded-lg text-[10px] font-bold uppercase hover:bg-primary/90"
                         >
-                          Verify
+                          Approve
                         </button>
                       </div>
                     </td>
                   </tr>
                 ))}
-                {users.filter(u => !u.isVerified).length === 0 && (
+                {users.filter(u => u.verificationStatus === 'pending').length === 0 && (
                   <tr>
                     <td colSpan={3} className="p-10 text-center text-slate-400 italic">No verification requests found.</td>
                   </tr>
@@ -2226,6 +2251,38 @@ const Navbar = ({ activeTab, setActiveTab, unreadCount }: any) => {
   );
 };
 
+const TermsModal = ({ isOpen, onClose, title, content }: { isOpen: boolean, onClose: () => void, title: string, content: string }) => {
+  if (!isOpen) return null;
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-white rounded-[32px] overflow-hidden max-w-2xl w-full shadow-2xl flex flex-col max-h-[80vh]"
+      >
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center shrink-0">
+          <h3 className="text-xl font-bold text-slate-900">{title}</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+            <X size={24} />
+          </button>
+        </div>
+        <div className="p-8 overflow-y-auto text-sm text-slate-600 leading-relaxed space-y-4">
+          <div dangerouslySetInnerHTML={{ __html: content }} />
+        </div>
+        <div className="p-6 border-t border-slate-100 flex justify-end shrink-0">
+          <button onClick={onClose} className="btn-primary px-8 py-2.5 text-sm">Close</button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
 const Hero = () => {
   const { signIn, login, register, resetPassword, isSigningIn, signInError } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
@@ -2233,9 +2290,41 @@ const Hero = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [showTerms, setShowTerms] = useState<'terms' | 'popi' | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const termsContent = `
+    <h4 className="font-bold text-slate-900 mb-2">1. Acceptance of Terms</h4>
+    <p>By accessing and using Love Link, you agree to be bound by these Terms and Conditions. If you do not agree, please do not use the service.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">2. Eligibility</h4>
+    <p>You must be at least 18 years old to use Love Link. By creating an account, you represent and warrant that you are 18 or older.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">3. User Conduct</h4>
+    <p>Users are expected to behave respectfully. Harassment, abuse, or any form of discrimination will result in immediate account termination.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">4. Safety</h4>
+    <p>While we strive to provide a safe environment, we are not responsible for the actions of users. Always exercise caution when meeting someone in person.</p>
+  `;
+
+  const popiContent = `
+    <h4 className="font-bold text-slate-900 mb-2">Protection of Personal Information (POPI) Act</h4>
+    <p>Love Link is committed to protecting your privacy and ensuring that your personal information is collected and used properly, lawfully, and transparently in accordance with the POPI Act of South Africa.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">1. Information We Collect</h4>
+    <p>We collect information such as your name, age, gender, location, and interests to provide you with the best matching experience.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">2. Purpose of Collection</h4>
+    <p>Your information is used solely for the purpose of facilitating connections between users on the platform.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">3. Data Security</h4>
+    <p>We implement robust security measures to protect your data from unauthorized access, loss, or destruction.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">4. Your Rights</h4>
+    <p>You have the right to access, correct, or delete your personal information at any time through your profile settings.</p>
+  `;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLocalError(null);
+    if (!agreedToTerms) {
+      setLocalError("Please agree to the Terms and Conditions and POPI Act to continue.");
+      return;
+    }
     setSuccessMsg(null);
     try {
       if (mode === 'signin') {
@@ -2249,6 +2338,15 @@ const Hero = () => {
     } catch (err) {
       // Error is handled by AuthProvider and displayed via signInError
     }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setLocalError(null);
+    if (!agreedToTerms) {
+      setLocalError("Please agree to the Terms and Conditions and POPI Act to continue.");
+      return;
+    }
+    await signIn();
   };
 
   return (
@@ -2333,10 +2431,23 @@ const Hero = () => {
               <button 
                 type="submit"
                 disabled={isSigningIn}
-                className="w-full btn-primary py-3.5 text-sm font-bold shadow-lg shadow-primary/20"
+                className="w-full btn-primary py-3.5 text-sm font-bold shadow-lg shadow-primary/20 disabled:opacity-50"
               >
                 {isSigningIn ? 'Processing...' : mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Sign Up' : 'Send Reset Link'}
               </button>
+
+              <div className="flex items-start gap-3 mt-4">
+                <input 
+                  type="checkbox" 
+                  id="terms" 
+                  checked={agreedToTerms}
+                  onChange={(e) => setAgreedToTerms(e.target.checked)}
+                  className="mt-1 w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
+                />
+                <label htmlFor="terms" className="text-[10px] text-slate-500 leading-relaxed text-left">
+                  I agree to the <button type="button" onClick={() => setShowTerms('terms')} className="text-primary font-bold hover:underline">Terms & Conditions</button> and acknowledge the <button type="button" onClick={() => setShowTerms('popi')} className="text-primary font-bold hover:underline">POPI Act</button> regarding my personal data.
+                </label>
+              </div>
             </form>
 
             <div className="relative mb-6">
@@ -2344,14 +2455,22 @@ const Hero = () => {
               <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-slate-400 font-medium">Or continue with</span></div>
             </div>
 
-            <button 
-              onClick={signIn}
-              disabled={isSigningIn}
-              className="w-full flex items-center justify-center gap-3 py-3 px-6 rounded-xl border border-slate-200 hover:bg-slate-50 transition-all group text-sm disabled:opacity-50"
-            >
-              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
-              <span className="font-bold text-slate-700">Google</span>
-            </button>
+            <div className="space-y-3">
+              <button 
+                onClick={handleGoogleSignIn}
+                disabled={isSigningIn}
+                className="w-full flex items-center justify-center gap-3 py-3 px-6 rounded-xl border border-slate-200 hover:bg-slate-50 transition-all group text-sm disabled:opacity-50"
+              >
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+                <span className="font-bold text-slate-700">Google</span>
+              </button>
+              
+              {signInError?.includes('popup-blocked') && (
+                <p className="text-[10px] text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-100">
+                  <strong>Popup Blocked:</strong> Please enable popups for this site in your browser settings to sign in with Google.
+                </p>
+              )}
+            </div>
 
             {mode === 'signin' ? (
               <p className="mt-6 text-sm text-slate-500">
@@ -2363,10 +2482,10 @@ const Hero = () => {
               </p>
             )}
 
-            {signInError && (
+            {(signInError || localError) && (
               <div className="mt-4 p-3 bg-red-500/10 border border-red-500/50 rounded-xl text-red-500 text-xs flex items-center gap-2">
                 <AlertCircle size={14} className="shrink-0" />
-                <span className="text-left">{signInError}</span>
+                <span className="text-left">{localError || signInError}</span>
               </div>
             )}
 
@@ -2379,6 +2498,25 @@ const Hero = () => {
           </div>
         </motion.div>
       </div>
+
+      <AnimatePresence>
+        {showTerms === 'terms' && (
+          <TermsModal 
+            isOpen={true} 
+            onClose={() => setShowTerms(null)} 
+            title="Terms & Conditions" 
+            content={termsContent} 
+          />
+        )}
+        {showTerms === 'popi' && (
+          <TermsModal 
+            isOpen={true} 
+            onClose={() => setShowTerms(null)} 
+            title="POPI Act Compliance" 
+            content={popiContent} 
+          />
+        )}
+      </AnimatePresence>
     </section>
   );
 };
@@ -3156,6 +3294,126 @@ const Pricing = () => {
   );
 };
 
+const CameraModal = ({ isOpen, onClose, onCapture }: { isOpen: boolean, onClose: () => void, onCapture: (base64: string) => void }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+    return () => stopCamera();
+  }, [isOpen]);
+
+  const startCamera = async () => {
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } 
+      });
+      setStream(mediaStream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+      }
+    } catch (err) {
+      console.error("Camera access error:", err);
+      setError("Could not access camera. Please check your permissions.");
+    }
+  };
+
+  const stopCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+  };
+
+  const capture = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const context = canvas.getContext('2d');
+      if (context) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const base64 = canvas.toDataURL('image/jpeg', 0.8);
+        onCapture(base64);
+        stopCamera();
+        onClose();
+      }
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-white rounded-[40px] overflow-hidden max-w-xl w-full shadow-2xl"
+      >
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+          <h3 className="text-xl font-bold">Take a Selfie</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="relative aspect-video bg-black">
+          {error ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+              <ShieldAlert size={48} className="text-red-500 mb-4" />
+              <p className="text-white font-bold">{error}</p>
+              <button 
+                onClick={startCamera}
+                className="mt-4 px-6 py-2 bg-white text-black rounded-xl font-bold"
+              >
+                Retry
+              </button>
+            </div>
+          ) : (
+            <video 
+              ref={videoRef} 
+              autoPlay 
+              playsInline 
+              className="w-full h-full object-cover mirror"
+              style={{ transform: 'scaleX(-1)' }}
+            />
+          )}
+          <canvas ref={canvasRef} className="hidden" />
+        </div>
+
+        <div className="p-8 flex justify-center">
+          <button
+            onClick={capture}
+            disabled={!!error || !stream}
+            className="w-20 h-20 rounded-full border-4 border-primary p-1 bg-white hover:scale-105 transition-transform active:scale-95 disabled:opacity-50 disabled:scale-100"
+          >
+            <div className="w-full h-full rounded-full bg-primary flex items-center justify-center">
+              <Camera size={32} className="text-white" />
+            </div>
+          </button>
+        </div>
+        
+        <p className="text-center text-[10px] text-slate-400 pb-8 px-8">
+          Position your face clearly in the frame. This photo will only be used for identity verification.
+        </p>
+      </motion.div>
+    </motion.div>
+  );
+};
+
 const SignupModal = ({ isOpen, onClose }: any) => {
   const [step, setStep] = useState(1);
   const totalSteps = 8;
@@ -3859,6 +4117,89 @@ const ProfileView = () => {
   const { profile, logout } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
+  const [isUploadingSelfie, setIsUploadingSelfie] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  const [showTerms, setShowTerms] = useState<'terms' | 'popi' | null>(null);
+
+  const termsContent = `
+    <h4 className="font-bold text-slate-900 mb-2">1. Acceptance of Terms</h4>
+    <p>By accessing and using Love Link, you agree to be bound by these Terms and Conditions. If you do not agree, please do not use the service.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">2. Eligibility</h4>
+    <p>You must be at least 18 years old to use Love Link. By creating an account, you represent and warrant that you are 18 or older.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">3. User Conduct</h4>
+    <p>Users are expected to behave respectfully. Harassment, abuse, or any form of discrimination will result in immediate account termination.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">4. Safety</h4>
+    <p>While we strive to provide a safe environment, we are not responsible for the actions of users. Always exercise caution when meeting someone in person.</p>
+  `;
+
+  const popiContent = `
+    <h4 className="font-bold text-slate-900 mb-2">Protection of Personal Information (POPI) Act</h4>
+    <p>Love Link is committed to protecting your privacy and ensuring that your personal information is collected and used properly, lawfully, and transparently in accordance with the POPI Act of South Africa.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">1. Information We Collect</h4>
+    <p>We collect information such as your name, age, gender, location, and interests to provide you with the best matching experience.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">2. Purpose of Collection</h4>
+    <p>Your information is used solely for the purpose of facilitating connections between users on the platform.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">3. Data Security</h4>
+    <p>We implement robust security measures to protect your data from unauthorized access, loss, or destruction.</p>
+    <h4 className="font-bold text-slate-900 mb-2 mt-4">4. Your Rights</h4>
+    <p>You have the right to access, correct, or delete your personal information at any time through your profile settings.</p>
+  `;
+
+  const compressImage = (base64Str: string, maxWidth = 600, maxHeight = 600, quality = 0.6): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(base64Str);
+    });
+  };
+
+  const handleSelfieUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && profile) {
+      if (file.size > 5 * 1024 * 1024) {
+        alert("File is too large. Please choose an image under 5MB.");
+        return;
+      }
+      setIsUploadingSelfie(true);
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        try {
+          const compressed = await compressImage(reader.result as string);
+          await updateDoc(doc(db, 'users', profile.uid), {
+            verificationSelfie: compressed,
+            verificationStatus: 'pending'
+          });
+          alert("Selfie uploaded! Our team will review it shortly.");
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `users/${profile.uid}`);
+        } finally {
+          setIsUploadingSelfie(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   if (!profile) {
     return (
@@ -3977,6 +4318,96 @@ const ProfileView = () => {
                   {profile.lookingFor || "Not specified"}
                 </div>
               </div>
+
+              {/* Identity Verification Section */}
+              <div className="p-6 rounded-3xl bg-slate-50 border border-slate-100">
+                <div className="flex items-center gap-2 mb-4">
+                  <ShieldCheck size={18} className="text-primary" />
+                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Identity Verification</h4>
+                </div>
+                
+                {profile.isVerified ? (
+                  <div className="flex items-center gap-3 p-4 bg-green-50 rounded-2xl border border-green-100">
+                    <CheckCircle2 className="text-green-500" size={24} />
+                    <div>
+                      <p className="text-sm font-bold text-green-900">Verified Account</p>
+                      <p className="text-[10px] text-green-600">Your identity has been confirmed.</p>
+                    </div>
+                  </div>
+                ) : profile.verificationStatus === 'pending' ? (
+                  <div className="flex items-center gap-3 p-4 bg-amber-50 rounded-2xl border border-amber-100">
+                    <div className="animate-pulse w-6 h-6 bg-amber-200 rounded-full" />
+                    <div>
+                      <p className="text-sm font-bold text-amber-900">Verification Pending</p>
+                      <p className="text-[10px] text-amber-600">Our team is reviewing your selfie.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Verify your identity to get a blue checkmark and increase your match rate by up to 3x!
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => setShowCamera(true)}
+                        disabled={isUploadingSelfie}
+                        className="btn-primary py-3 text-[10px] flex items-center justify-center gap-2"
+                      >
+                        <Camera size={14} />
+                        Take Selfie
+                      </button>
+                      <label className="block">
+                        <div className={`bg-slate-100 text-slate-600 py-3 rounded-2xl text-[10px] font-bold uppercase flex items-center justify-center gap-2 cursor-pointer hover:bg-slate-200 transition-all ${isUploadingSelfie ? 'opacity-50 pointer-events-none' : ''}`}>
+                          {isUploadingSelfie ? (
+                            <div className="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <ImageIcon size={14} />
+                          )}
+                          {isUploadingSelfie ? 'Uploading...' : 'Upload File'}
+                        </div>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={handleSelfieUpload}
+                          disabled={isUploadingSelfie}
+                        />
+                      </label>
+                    </div>
+                    {profile.verificationStatus === 'rejected' && (
+                      <p className="text-[10px] text-red-500 font-bold">
+                        Your previous request was rejected. Please upload a clearer selfie.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <AnimatePresence>
+                {showCamera && (
+                  <CameraModal 
+                    isOpen={showCamera} 
+                    onClose={() => setShowCamera(false)} 
+                    onCapture={async (base64) => {
+                      if (profile) {
+                        setIsUploadingSelfie(true);
+                        try {
+                          const compressed = await compressImage(base64);
+                          await updateDoc(doc(db, 'users', profile.uid), {
+                            verificationSelfie: compressed,
+                            verificationStatus: 'pending'
+                          });
+                          alert("Selfie captured! Our team will review it shortly.");
+                        } catch (err) {
+                          handleFirestoreError(err, OperationType.UPDATE, `users/${profile.uid}`);
+                        } finally {
+                          setIsUploadingSelfie(false);
+                        }
+                      }
+                    }}
+                  />
+                )}
+              </AnimatePresence>
             </div>
 
             <div className="space-y-6">
@@ -4020,6 +4451,26 @@ const ProfileView = () => {
                 </div>
               </div>
 
+              <div className="p-6 rounded-3xl bg-slate-50 border border-slate-100">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">Legal</h4>
+                <div className="space-y-3">
+                  <button 
+                    onClick={() => setShowTerms('terms')}
+                    className="w-full flex items-center justify-between text-xs text-slate-600 hover:text-primary transition-colors group"
+                  >
+                    <span>Terms & Conditions</span>
+                    <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                  </button>
+                  <button 
+                    onClick={() => setShowTerms('popi')}
+                    className="w-full flex items-center justify-between text-xs text-slate-600 hover:text-primary transition-colors group"
+                  >
+                    <span>POPI Act Compliance</span>
+                    <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                  </button>
+                </div>
+              </div>
+
               <button 
                 onClick={logout}
                 className="w-full py-4 rounded-2xl border-2 border-red-50 text-red-500 font-bold hover:bg-red-50 transition-all flex items-center justify-center gap-2"
@@ -4035,6 +4486,22 @@ const ProfileView = () => {
       <AnimatePresence>
         {isEditing && (
           <ProfileEditModal profile={profile} onClose={() => setIsEditing(false)} />
+        )}
+        {showTerms === 'terms' && (
+          <TermsModal 
+            isOpen={true} 
+            onClose={() => setShowTerms(null)} 
+            title="Terms & Conditions" 
+            content={termsContent} 
+          />
+        )}
+        {showTerms === 'popi' && (
+          <TermsModal 
+            isOpen={true} 
+            onClose={() => setShowTerms(null)} 
+            title="POPI Act Compliance" 
+            content={popiContent} 
+          />
         )}
       </AnimatePresence>
     </div>
