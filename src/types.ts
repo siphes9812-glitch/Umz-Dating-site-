@@ -39,6 +39,8 @@ export interface User {
   isBanned?: boolean;
   isBlocked?: boolean;
   isVerified: boolean;
+  verificationStatus?: 'pending' | 'approved' | 'rejected';
+  verificationSelfie?: string;
   isPremium: boolean;
   blockedUsers?: string[];
   isOnline?: boolean;
@@ -50,6 +52,17 @@ export interface User {
   preferredDistance?: number;
   preferredEducation?: string[];
   pushNotificationsEnabled?: boolean;
+}
+
+export interface Call {
+  id: string;
+  callerId: string;
+  receiverId: string;
+  type: 'audio' | 'video';
+  status: 'ringing' | 'accepted' | 'rejected' | 'ended';
+  offer?: any;
+  answer?: any;
+  timestamp: any;
 }
 
 export interface Notification {

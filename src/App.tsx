@@ -40,7 +40,15 @@ import {
   BarChart3,
   LifeBuoy,
   Filter,
-  Send
+  Send,
+  Video,
+  VideoOff,
+  Phone,
+  PhoneOff,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { User as UserType } from './types';
@@ -159,9 +167,7 @@ const ErrorBoundary = ({ children }: { children: React.ReactNode }) => {
           <AlertCircle className="mx-auto mb-4 text-primary" size={48} />
           <h2 className="text-2xl font-bold mb-2">Something went wrong</h2>
           <p className="text-slate-400 mb-6">
-            {(error?.message && typeof error.message === 'string' && error.message.includes('{')) 
-              ? "A database error occurred. Please try again later." 
-              : "An unexpected error occurred."}
+            {error?.message || "An unexpected error occurred."}
           </p>
           <button 
             onClick={() => window.location.reload()}
@@ -355,7 +361,9 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         return signIn(retryCount + 1);
       }
 
-      if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+      if (error.code === 'auth/popup-blocked') {
+        setSignInError("The sign-in popup was blocked by your browser. Please allow popups for this site or open the application in a new tab to sign in.");
+      } else if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
         console.error("Sign in error", error);
         if (error.code === 'auth/network-request-failed') {
           setSignInError("Network error: Please check your connection and try again.");
@@ -780,13 +788,34 @@ const UserEditModal = ({
 
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Location</label>
-            <input 
-              type="text" 
-              value={formData.location}
-              onChange={e => setFormData(prev => ({ ...prev, location: e.target.value }))}
-              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all"
+            <select 
+              value={UMZIMKHULU_PLACES.includes(formData.location) ? formData.location : (formData.location ? "Other" : "")}
+              onChange={e => {
+                if (e.target.value === "Other") {
+                  setFormData(prev => ({ ...prev, location: '' }));
+                } else {
+                  setFormData(prev => ({ ...prev, location: e.target.value }));
+                }
+              }}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all mb-2"
               required
-            />
+            >
+              <option value="" disabled>Select a place in uMzimkhulu</option>
+              {UMZIMKHULU_PLACES.map(place => (
+                <option key={place} value={place}>{place}</option>
+              ))}
+              <option value="Other">Other (Add Manually)</option>
+            </select>
+            {(!UMZIMKHULU_PLACES.includes(formData.location) || formData.location === "") && (
+              <input 
+                type="text" 
+                placeholder="Enter your location manually"
+                value={formData.location}
+                onChange={e => setFormData(prev => ({ ...prev, location: e.target.value }))}
+                className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all"
+                required
+              />
+            )}
           </div>
 
           <div>
@@ -832,10 +861,15 @@ const UserEditModal = ({
   );
 };
 
-const AdminDashboard = () => {
+const AdminDashboard = ({ setActiveTab, setSelectedMatchId, onCall }: { 
+  setActiveTab: (tab: string) => void, 
+  setSelectedMatchId: (id: string | null) => void,
+  onCall: (receiverId: string, type: 'audio' | 'video') => void
+}) => {
   const [users, setUsers] = useState<UserType[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState<
     'users' | 'moderation' | 'interactions' | 'reports' | 'verification' | 
     'payments' | 'notifications' | 'content' | 'analytics' | 'location' | 
@@ -867,11 +901,16 @@ const AdminDashboard = () => {
     const unsubscribeUsers = onSnapshot(q, (snap) => {
       setUsers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserType)));
       setLoading(false);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'users');
+      setLoading(false);
     });
 
     const qReports = query(collection(db, 'reports'), orderBy('createdAt', 'desc'));
     const unsubscribeReports = onSnapshot(qReports, (snap) => {
       setReports(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'reports');
     });
 
     const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
@@ -880,21 +919,29 @@ const AdminDashboard = () => {
         setAppSettings(prev => ({ ...prev, ...data }));
         setBroadcastMessage(data.broadcastMessage || '');
       }
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'settings/global');
     });
 
     const qTickets = query(collection(db, 'support_tickets'), orderBy('createdAt', 'desc'));
     const unsubscribeTickets = onSnapshot(qTickets, (snap) => {
       setSupportTickets(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'support_tickets');
     });
 
     const qMatches = query(collection(db, 'matches'), orderBy('timestamp', 'desc'), limit(50));
     const unsubscribeMatches = onSnapshot(qMatches, (snap) => {
       setMatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'matches');
     });
 
     const qLogs = query(collection(db, 'security_logs'), orderBy('timestamp', 'desc'), limit(20));
     const unsubscribeLogs = onSnapshot(qLogs, (snap) => {
       setSecurityLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'security_logs');
     });
 
     return () => {
@@ -1029,6 +1076,26 @@ const AdminDashboard = () => {
       await updateDoc(doc(db, 'reports', reportId), { status });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `reports/${reportId}`);
+    }
+  };
+  
+  const handleAdminMessage = async (targetUser: UserType) => {
+    if (!user) return;
+    const matchId = [user.uid, targetUser.id].sort().join('_');
+    try {
+      // Check if match already exists
+      const matchDoc = await getDoc(doc(db, 'matches', matchId));
+      if (!matchDoc.exists()) {
+        await setDoc(doc(db, 'matches', matchId), {
+          users: [user.uid, targetUser.id],
+          timestamp: serverTimestamp(),
+          typing: { [user.uid]: false, [targetUser.id]: false }
+        });
+      }
+      setSelectedMatchId(matchId);
+      setActiveTab('chat');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `matches/${matchId}`);
     }
   };
 
@@ -1239,6 +1306,31 @@ const AdminDashboard = () => {
                         >
                           <Edit3 size={18} />
                         </button>
+                        {u.id !== user?.uid && (
+                          <>
+                            <button 
+                              onClick={() => onCall(u.id, 'audio')}
+                              className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-all"
+                              title="Voice Call"
+                            >
+                              <Phone size={18} />
+                            </button>
+                            <button 
+                              onClick={() => onCall(u.id, 'video')}
+                              className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-all"
+                              title="Video Call"
+                            >
+                              <Video size={18} />
+                            </button>
+                            <button 
+                              onClick={() => handleAdminMessage(u)}
+                              className="p-2 bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-all"
+                              title="Message User"
+                            >
+                              <MessageSquare size={18} />
+                            </button>
+                          </>
+                        )}
                         {u.role !== 'admin' && (
                           <>
                             <button 
@@ -2548,9 +2640,18 @@ const Hero = () => {
               </button>
               
               {signInError?.includes('popup-blocked') && (
-                <p className="text-[10px] text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-100">
-                  <strong>Popup Blocked:</strong> Please enable popups for this site in your browser settings to sign in with Google.
-                </p>
+                <div className="space-y-2">
+                  <p className="text-[10px] text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-100">
+                    <strong>Popup Blocked:</strong> Please enable popups for this site in your browser settings to sign in with Google.
+                  </p>
+                  <button 
+                    onClick={() => window.open(window.location.href, '_blank')}
+                    className="w-full py-2 px-4 bg-amber-100 text-amber-700 rounded-lg text-[10px] font-bold hover:bg-amber-200 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Zap size={12} />
+                    Open in New Tab to Sign In
+                  </button>
+                </div>
               )}
             </div>
 
@@ -2674,7 +2775,18 @@ const ProfileCard = ({ user, currentUserProfile, onLike, onPass, onMessage, onRe
         <div className={cn("absolute left-4 right-4 text-white", compact ? "bottom-3" : "bottom-6 left-6 right-6")}>
           <div className="flex items-center gap-2 mb-1">
             <h3 className={cn("font-bold truncate", compact ? "text-sm" : "text-xl")}>{user.name}, {user.age}</h3>
-            {user.isVerified && <ShieldCheck className="text-accent" size={compact ? 14 : 18} />}
+            {user.isVerified && (
+              <div className="flex items-center gap-1">
+                <ShieldCheck className="text-accent" size={compact ? 14 : 18} />
+                {!compact && <span className="text-[10px] font-bold text-accent uppercase tracking-widest">Verified</span>}
+              </div>
+            )}
+            {user.verificationStatus === 'pending' && !user.isVerified && (
+              <div className="flex items-center gap-1 bg-amber-500/20 backdrop-blur-md px-2 py-0.5 rounded-full border border-amber-500/30">
+                <ShieldAlert className="text-amber-500" size={compact ? 10 : 12} />
+                <span className="text-[8px] font-bold text-amber-500 uppercase tracking-widest">Pending</span>
+              </div>
+            )}
           </div>
           <p className={cn("text-slate-300 flex items-center gap-1 mb-2", compact ? "text-[10px]" : "text-xs mb-3")}>
             <Search size={compact ? 10 : 12} /> {user.location || 'Location not set'}
@@ -3186,8 +3298,7 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
 
     const q = query(
       collection(db, 'matches'),
-      where('users', 'array-contains', user.uid),
-      orderBy('timestamp', 'desc')
+      where('users', 'array-contains', user.uid)
     );
 
     const unsubscribe = onSnapshot(q, async (snap) => {
@@ -3204,11 +3315,17 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
         if (profile?.blockedUsers?.includes(m.otherUser.id)) return false;
         if (m.otherUser.blockedUsers?.includes(user.uid)) return false;
         return true;
+      }).sort((a: any, b: any) => {
+        const tA = a.timestamp?.toMillis() || 0;
+        const tB = b.timestamp?.toMillis() || 0;
+        return tB - tA;
       });
       setMatches(matchesData);
       if (matchesData.length > 0 && !selectedMatchId) {
         setSelectedMatchId(matchesData[0].id);
       }
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'matches');
     });
 
     return () => unsubscribe();
@@ -3643,6 +3760,343 @@ const CameraModal = ({ isOpen, onClose, onCapture }: { isOpen: boolean, onClose:
         </p>
       </motion.div>
     </motion.div>
+  );
+};
+
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+  ],
+};
+
+const UMZIMKHULU_PLACES = [
+  "Umzimkhulu Town",
+  "Ibisi",
+  "Clydesdale",
+  "Rietvlei",
+  "Lourdes",
+  "Singisi",
+  "Riverside",
+  "Glengarry",
+  "Malenge",
+  "Jolivet",
+  "Kromhoek",
+  "Mahwaqa",
+  "Mfulamhle",
+  "Mountain Home",
+  "Ntsikeni",
+  "Phungula",
+  "Sihleza",
+  "Straalhoek",
+  "Teekloof",
+  "Umzimkhulu Rural"
+];
+
+const CallModal = ({ call, isCaller, onClose }: { call: any, isCaller: boolean, onClose: () => void }) => {
+  const { user } = useAuth();
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(call.type === 'audio');
+  const [status, setStatus] = useState<'connecting' | 'ringing' | 'connected' | 'ended'>(isCaller ? 'ringing' : 'connecting');
+  const [otherUser, setOtherUser] = useState<UserType | null>(null);
+  const [callError, setCallError] = useState<string | null>(null);
+  
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const unsubscribesRef = useRef<(() => void)[]>([]);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const fetchOtherUser = async () => {
+      const otherId = isCaller ? call.receiverId : call.callerId;
+      const docSnap = await getDoc(doc(db, 'users', otherId));
+      if (docSnap.exists()) {
+        setOtherUser({ id: otherId, ...docSnap.data() } as UserType);
+      }
+    };
+    fetchOtherUser();
+  }, [call, isCaller]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const startCall = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: call.type === 'video'
+        });
+        if (!isMounted) return;
+        setLocalStream(stream);
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+        const pc = new RTCPeerConnection(RTC_CONFIG);
+        pcRef.current = pc;
+
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        pc.ontrack = (event) => {
+          if (isMounted) {
+            setRemoteStream(event.streams[0]);
+            if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+            setStatus('connected');
+          }
+        };
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            const candidatesCol = collection(db, 'calls', call.id, isCaller ? 'callerCandidates' : 'receiverCandidates');
+            addDoc(candidatesCol, event.candidate.toJSON());
+          }
+        };
+
+        if (isCaller) {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          await updateDoc(doc(db, 'calls', call.id), { offer: { sdp: offer.sdp, type: offer.type } });
+
+          const unsub = onSnapshot(doc(db, 'calls', call.id), (snapshot) => {
+            const data = snapshot.data();
+            if (data?.answer && !pc.currentRemoteDescription) {
+              pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+            }
+            if (data?.status === 'rejected' || data?.status === 'ended') {
+              cleanup();
+            }
+          });
+          unsubscribesRef.current.push(unsub);
+        } else {
+          await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await updateDoc(doc(db, 'calls', call.id), { answer: { sdp: answer.sdp, type: answer.type }, status: 'accepted' });
+
+          const unsub = onSnapshot(doc(db, 'calls', call.id), (snapshot) => {
+            const data = snapshot.data();
+            if (data?.status === 'ended') {
+              cleanup();
+            }
+          });
+          unsubscribesRef.current.push(unsub);
+        }
+
+        const otherCandidatesCol = collection(db, 'calls', call.id, isCaller ? 'receiverCandidates' : 'callerCandidates');
+        const unsubCandidates = onSnapshot(otherCandidatesCol, (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'added') {
+              pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+            }
+          });
+        });
+        unsubscribesRef.current.push(unsubCandidates);
+
+      } catch (err) {
+        console.error("Call error:", err);
+        setCallError(err instanceof Error ? err.message : "Failed to connect call");
+        setTimeout(() => cleanup(), 3000);
+      }
+    };
+
+    startCall();
+
+    return () => {
+      isMounted = false;
+      cleanup();
+    };
+  }, []);
+
+  const cleanup = () => {
+    unsubscribesRef.current.forEach(unsub => unsub());
+    unsubscribesRef.current = [];
+    if (localStream) localStream.getTracks().forEach(track => track.stop());
+    if (pcRef.current) pcRef.current.close();
+    onClose();
+  };
+
+  const endCall = async () => {
+    await updateDoc(doc(db, 'calls', call.id), { status: 'ended' });
+    cleanup();
+  };
+
+  const toggleMute = () => {
+    if (localStream) {
+      const audioTrack = localStream.getAudioTracks()[0];
+      audioTrack.enabled = !audioTrack.enabled;
+      setIsMuted(!audioTrack.enabled);
+    }
+  };
+
+  const toggleVideo = () => {
+    if (localStream && call.type === 'video') {
+      const videoTrack = localStream.getVideoTracks()[0];
+      videoTrack.enabled = !videoTrack.enabled;
+      setIsVideoOff(!videoTrack.enabled);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center p-6">
+      <div className="relative w-full max-w-4xl aspect-video bg-slate-900 rounded-[40px] overflow-hidden shadow-2xl border border-white/10">
+        {callError ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 text-white p-6 text-center">
+            <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4">
+              <PhoneOff className="text-red-500" size={32} />
+            </div>
+            <h3 className="text-xl font-bold mb-2">Call Error</h3>
+            <p className="text-slate-400 mb-6">{callError}</p>
+            <button 
+              onClick={cleanup}
+              className="px-6 py-2 bg-white text-slate-900 rounded-full font-bold hover:bg-slate-200 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Remote Video */}
+            {call.type === 'video' ? (
+          <video 
+            ref={remoteVideoRef} 
+            autoPlay 
+            playsInline 
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-primary/20 to-secondary/20">
+            <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-white/20 mb-6 shadow-2xl">
+              <img 
+                src={otherUser?.images?.[0] || `https://ui-avatars.com/api/?name=${otherUser?.name || 'User'}`} 
+                className="w-full h-full object-cover"
+                alt="Other User"
+              />
+            </div>
+            <h2 className="text-3xl font-bold text-white mb-2">{otherUser?.name || 'Connecting...'}</h2>
+            <p className="text-slate-400 animate-pulse">{status === 'ringing' ? 'Ringing...' : 'Voice Call'}</p>
+          </div>
+        )}
+
+        {/* Local Video Overlay */}
+        {call.type === 'video' && (
+          <div className="absolute top-6 right-6 w-48 aspect-[3/4] bg-slate-800 rounded-3xl overflow-hidden shadow-xl border-2 border-white/20">
+            <video 
+              ref={localVideoRef} 
+              autoPlay 
+              playsInline 
+              muted 
+              className="w-full h-full object-cover"
+            />
+            {isVideoOff && (
+              <div className="absolute inset-0 bg-slate-900 flex items-center justify-center">
+                <VideoOff className="text-slate-600" size={24} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Call Info Overlay */}
+        <div className="absolute top-6 left-6 flex items-center gap-3 bg-black/40 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10">
+          <div className={cn("w-2 h-2 rounded-full", status === 'connected' ? "bg-green-500" : "bg-amber-500 animate-pulse")} />
+          <span className="text-white text-xs font-bold uppercase tracking-widest">
+            {status === 'connected' ? 'Connected' : 'Connecting...'}
+          </span>
+        </div>
+
+        {/* Controls */}
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-6">
+          <button 
+            onClick={toggleMute}
+            className={cn(
+              "w-14 h-14 rounded-full flex items-center justify-center transition-all shadow-lg",
+              isMuted ? "bg-red-500 text-white" : "bg-white/20 backdrop-blur-md text-white hover:bg-white/30"
+            )}
+          >
+            {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
+          </button>
+
+          {call.type === 'video' && (
+            <button 
+              onClick={toggleVideo}
+              className={cn(
+                "w-14 h-14 rounded-full flex items-center justify-center transition-all shadow-lg",
+                isVideoOff ? "bg-red-500 text-white" : "bg-white/20 backdrop-blur-md text-white hover:bg-white/30"
+              )}
+            >
+              {isVideoOff ? <VideoOff size={24} /> : <Video size={24} />}
+            </button>
+          )}
+
+          <button 
+            onClick={endCall}
+            className="w-16 h-16 bg-red-600 text-white rounded-full flex items-center justify-center hover:bg-red-700 transition-all shadow-xl hover:scale-110 active:scale-95"
+          >
+            <PhoneOff size={32} />
+          </button>
+        </div>
+      </>
+    )}
+  </div>
+      
+      <div className="mt-8 text-center">
+        <p className="text-slate-500 text-xs font-medium max-w-sm">
+          Calls are end-to-end encrypted. Your privacy is our priority.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+const IncomingCallModal = ({ call, onAccept, onReject }: { call: any, onAccept: () => void, onReject: () => void }) => {
+  const [caller, setCaller] = useState<UserType | null>(null);
+
+  useEffect(() => {
+    const fetchCaller = async () => {
+      const docSnap = await getDoc(doc(db, 'users', call.callerId));
+      if (docSnap.exists()) {
+        setCaller({ id: call.callerId, ...docSnap.data() } as UserType);
+      }
+    };
+    fetchCaller();
+  }, [call]);
+
+  return (
+    <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-md flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-white rounded-[40px] p-8 w-full max-w-sm text-center shadow-2xl border border-black/5"
+      >
+        <div className="relative mx-auto w-24 h-24 mb-6">
+          <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
+          <img 
+            src={caller?.images?.[0] || `https://ui-avatars.com/api/?name=${caller?.name || 'User'}`} 
+            className="relative w-full h-full rounded-full object-cover border-4 border-white shadow-lg"
+            alt="Caller"
+          />
+        </div>
+        <h3 className="text-2xl font-bold mb-1">{caller?.name || 'Incoming Call'}</h3>
+        <p className="text-slate-500 text-sm mb-8">Incoming {call.type} call...</p>
+        
+        <div className="flex gap-4">
+          <button 
+            onClick={onReject}
+            className="flex-1 bg-red-100 text-red-600 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-red-200 transition-all"
+          >
+            <PhoneOff size={20} />
+            Decline
+          </button>
+          <button 
+            onClick={onAccept}
+            className="flex-1 bg-green-500 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-green-600 transition-all shadow-lg shadow-green-200"
+          >
+            {call.type === 'video' ? <Video size={20} /> : <Phone size={20} />}
+            Accept
+          </button>
+        </div>
+      </motion.div>
+    </div>
   );
 };
 
@@ -4448,6 +4902,11 @@ const ProfileView = () => {
                   <ShieldCheck size={20} />
                 </div>
               )}
+              {profile.verificationStatus === 'pending' && !profile.isVerified && (
+                <div className="p-2 bg-amber-100 text-amber-600 rounded-xl" title="Verification Pending">
+                  <ShieldAlert size={20} />
+                </div>
+              )}
               {profile.isPremium && (
                 <div className="p-2 bg-amber-100 text-amber-600 rounded-xl" title="Premium Member">
                   <Crown size={20} />
@@ -4587,10 +5046,6 @@ const ProfileView = () => {
                   <div className="flex justify-between text-xs">
                     <span className="text-slate-500">Education</span>
                     <span className="font-bold">{profile.education || 'N/A'}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">Zodiac</span>
-                    <span className="font-bold">{profile.zodiac || 'N/A'}</span>
                   </div>
                 </div>
               </div>
@@ -4892,21 +5347,43 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
             </div>
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Location</label>
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  value={formData.location}
-                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                  className="flex-1 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
-                />
-                <button 
-                  type="button"
-                  onClick={updateLocation}
-                  className="px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 hover:bg-slate-100 transition-all text-primary"
-                  title="Update to current location"
-                >
-                  <MapPin size={18} />
-                </button>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <select 
+                    value={UMZIMKHULU_PLACES.includes(formData.location) ? formData.location : (formData.location ? "Other" : "")}
+                    onChange={(e) => {
+                      if (e.target.value === "Other") {
+                        setFormData({ ...formData, location: '' });
+                      } else {
+                        setFormData({ ...formData, location: e.target.value });
+                      }
+                    }}
+                    className="flex-1 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+                  >
+                    <option value="" disabled>Select a place in uMzimkhulu</option>
+                    {UMZIMKHULU_PLACES.map(place => (
+                      <option key={place} value={place}>{place}</option>
+                    ))}
+                    <option value="Other">Other (Add Manually)</option>
+                  </select>
+                  <button 
+                    type="button"
+                    onClick={updateLocation}
+                    className="px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 hover:bg-slate-100 transition-all text-primary"
+                    title="Update to current location"
+                  >
+                    <MapPin size={18} />
+                  </button>
+                </div>
+                {(!UMZIMKHULU_PLACES.includes(formData.location) || formData.location === "") && (
+                  <input 
+                    type="text" 
+                    placeholder="Enter your location manually"
+                    value={formData.location}
+                    onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
+                  />
+                )}
               </div>
               {formData.latitude && (
                 <p className="text-[10px] text-slate-400 mt-1 italic">
@@ -5003,7 +5480,7 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
             <p className="text-[10px] text-slate-400 italic">Compressed images help keep your profile loading fast.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Height</label>
               <input 
@@ -5019,15 +5496,6 @@ const ProfileEditModal = ({ profile, onClose }: { profile: UserType, onClose: ()
                 type="text" 
                 value={formData.education}
                 onChange={(e) => setFormData({ ...formData, education: e.target.value })}
-                className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Zodiac</label>
-              <input 
-                type="text" 
-                value={formData.zodiac}
-                onChange={(e) => setFormData({ ...formData, zodiac: e.target.value })}
                 className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-primary outline-none transition-all"
               />
             </div>
@@ -5368,6 +5836,58 @@ function AppContent() {
   const [verificationSent, setVerificationSent] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const isAdminUser = profile?.role === 'admin' || user?.email === 'siphes9812@gmail.com';
+
+  const [activeCall, setActiveCall] = useState<any>(null);
+  const [incomingCall, setIncomingCall] = useState<any>(null);
+  const [isCaller, setIsCaller] = useState(false);
+  const [isAccepting, setIsAccepting] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, 'calls'),
+      where('receiverId', '==', user.uid),
+      where('status', '==', 'ringing')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const callData = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+        // Only set incoming call if we're not already in an active call and not currently accepting
+        if (!activeCall && !isAccepting) {
+          setIncomingCall(callData);
+        }
+      } else {
+        // If snapshot is empty, it means the call is no longer ringing
+        // But we only clear it if we haven't accepted it yet and not currently accepting
+        if (!isAccepting) {
+          setIncomingCall(null);
+        }
+      }
+    }, (err) => {
+      console.error("Call listener error:", err);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleInitiateCall = async (receiverId: string, type: 'audio' | 'video') => {
+    if (!user) return;
+    try {
+      const callRef = await addDoc(collection(db, 'calls'), {
+        callerId: user.uid,
+        receiverId,
+        type,
+        status: 'ringing',
+        timestamp: serverTimestamp()
+      });
+      setActiveCall({ id: callRef.id, callerId: user.uid, receiverId, type, status: 'ringing' });
+      setIsCaller(true);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'calls');
+    }
+  };
 
   // Initialize push notifications
   usePushNotifications(user, profile);
@@ -5770,7 +6290,8 @@ function AppContent() {
         // It's a mutual match!
         setShowMatch(true);
         
-        await addDoc(collection(db, 'matches'), {
+        const matchId = [user.uid, targetUser.id].sort().join('_');
+        await setDoc(doc(db, 'matches', matchId), {
           users: [user.uid, targetUser.id],
           timestamp: serverTimestamp(),
           typing: { [user.uid]: false, [targetUser.id]: false }
@@ -6051,7 +6572,11 @@ function AppContent() {
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
             >
-              <AdminDashboard />
+              <AdminDashboard 
+                setActiveTab={setActiveTab} 
+                setSelectedMatchId={setSelectedMatchId} 
+                onCall={handleInitiateCall}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -6141,6 +6666,39 @@ function AppContent() {
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Call Modals */}
+      <AnimatePresence>
+        {activeCall && (
+          <CallModal 
+            call={activeCall} 
+            isCaller={isCaller} 
+            onClose={() => {
+              setActiveCall(null);
+              setIsCaller(false);
+            }} 
+          />
+        )}
+        {incomingCall && !activeCall && (
+          <IncomingCallModal 
+            call={incomingCall} 
+            onAccept={async () => {
+              setIsAccepting(true);
+              try {
+                setActiveCall(incomingCall);
+                setIsCaller(false);
+                setIncomingCall(null);
+              } finally {
+                setIsAccepting(false);
+              }
+            }} 
+            onReject={async () => {
+              await updateDoc(doc(db, 'calls', incomingCall.id), { status: 'rejected' });
+              setIncomingCall(null);
+            }} 
+          />
         )}
       </AnimatePresence>
 
