@@ -48,7 +48,10 @@ import {
   Mic,
   MicOff,
   Volume2,
-  VolumeX
+  VolumeX,
+  ImagePlus,
+  ArrowDownLeft,
+  ArrowUpRight
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { User as UserType } from './types';
@@ -285,7 +288,22 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         statusUnsubscribe = onSnapshot(userDoc, (snap) => {
           if (snap.exists()) {
             const data = snap.data();
-            setProfile({ id: snap.id, ...data } as UserType);
+            const profileData = { id: snap.id, ...data } as UserType;
+            
+            // Default Super Admin check
+            if (u.email === 'siphes9812@gmail.com') {
+              profileData.isSuperAdmin = true;
+            }
+
+            if (profileData.isDisabled) {
+              signOut(auth);
+              setProfile(null);
+              setSignInError("Your account has been disabled. Please contact support.");
+              setLoading(false);
+              return;
+            }
+
+            setProfile(profileData);
             
             // Update online status if not already online
             if (!data.isOnline) {
@@ -600,6 +618,150 @@ const Notifications = () => {
   );
 };
 
+const CallHistory = () => {
+  const { user } = useAuth();
+  const [calls, setCalls] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState<Record<string, UserType>>({});
+
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, 'calls'),
+      where('receiverId', '==', user.uid),
+      orderBy('timestamp', 'desc'),
+      limit(50)
+    );
+
+    const q2 = query(
+      collection(db, 'calls'),
+      where('callerId', '==', user.uid),
+      orderBy('timestamp', 'desc'),
+      limit(50)
+    );
+
+    const unsub1 = onSnapshot(q, (snap) => {
+      const received = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setCalls(prev => {
+        const otherCalls = prev.filter(c => c.callerId === user.uid);
+        const combined = [...otherCalls, ...received];
+        const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
+        return unique.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0)).slice(0, 50);
+      });
+      setLoading(false);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'calls');
+      setLoading(false);
+    });
+
+    const unsub2 = onSnapshot(q2, (snap) => {
+      const sent = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setCalls(prev => {
+        const otherCalls = prev.filter(c => c.receiverId === user.uid);
+        const combined = [...otherCalls, ...sent];
+        const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
+        return unique.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0)).slice(0, 50);
+      });
+      setLoading(false);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'calls');
+      setLoading(false);
+    });
+
+    return () => {
+      unsub1();
+      unsub2();
+    };
+  }, [user]);
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      const neededIds = Array.from(new Set(calls.map(c => c.callerId === user?.uid ? c.receiverId : c.callerId))) as string[];
+      const newUsers = { ...users };
+      let changed = false;
+      for (const id of neededIds) {
+        if (!newUsers[id]) {
+          const snap = await getDoc(doc(db, 'users', id));
+          if (snap.exists()) {
+            newUsers[id] = { id, ...snap.data() } as UserType;
+            changed = true;
+          }
+        }
+      }
+      if (changed) setUsers(newUsers);
+    };
+    if (calls.length > 0) fetchUsers();
+  }, [calls, user]);
+
+  if (loading) return <div className="flex justify-center py-20"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div></div>;
+
+  return (
+    <div className="max-w-2xl mx-auto py-8 px-4">
+      <div className="flex items-center justify-between mb-8">
+        <h2 className="text-2xl font-bold">Call History</h2>
+        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+          {calls.length} Recent Calls
+        </div>
+      </div>
+      <div className="space-y-4">
+        {calls.map((call) => {
+          const isIncoming = call.receiverId === user?.uid;
+          const otherId = isIncoming ? call.callerId : call.receiverId;
+          const otherUser = users[otherId];
+          const isMissed = isIncoming && (call.status === 'ringing' || call.status === 'rejected');
+
+          return (
+            <motion.div
+              key={call.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 rounded-3xl border bg-white border-slate-100 flex items-center gap-4 hover:shadow-md transition-shadow cursor-default"
+            >
+              <div className={cn(
+                "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
+                isMissed ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-600"
+              )}>
+                {call.type === 'video' ? <Video size={24} /> : <Phone size={24} />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <h3 className="font-bold text-slate-900 truncate">{otherUser?.name || 'Loading...'}</h3>
+                  <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                    {call.timestamp?.toDate ? formatDistanceToNow(call.timestamp.toDate(), { addSuffix: true }) : 'Just now'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isIncoming ? (
+                    <ArrowDownLeft size={14} className={isMissed ? "text-red-500" : "text-green-500"} />
+                  ) : (
+                    <ArrowUpRight size={14} className="text-blue-500" />
+                  )}
+                  <p className={cn("text-xs", isMissed ? "text-red-500 font-bold" : "text-slate-500")}>
+                    {isIncoming ? (isMissed ? "Missed Call" : "Incoming Call") : "Outgoing Call"}
+                  </p>
+                </div>
+              </div>
+              <div className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">
+                {call.type}
+              </div>
+            </motion.div>
+          );
+        })}
+        {calls.length === 0 && (
+          <div className="text-center py-20 bg-slate-50 rounded-[40px] border-2 border-dashed border-slate-200">
+            <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
+              <PhoneOff className="text-slate-300" size={32} />
+            </div>
+            <h3 className="text-lg font-bold text-slate-700">No calls yet</h3>
+            <p className="text-slate-500">Your call history will appear here.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // --- Admin Components ---
 
 const ConfirmModal = ({ 
@@ -873,7 +1035,7 @@ const AdminDashboard = ({ setActiveTab, setSelectedMatchId, onCall }: {
   const [activeSubTab, setActiveSubTab] = useState<
     'users' | 'moderation' | 'interactions' | 'reports' | 'verification' | 
     'payments' | 'notifications' | 'content' | 'analytics' | 'location' | 
-    'security' | 'support' | 'settings'
+    'security' | 'support' | 'settings' | 'admin_management'
   >('users');
   const [editingUser, setEditingUser] = useState<UserType | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -958,11 +1120,11 @@ const AdminDashboard = ({ setActiveTab, setSelectedMatchId, onCall }: {
 
   const toggleBan = async (userId: string, currentStatus: boolean) => {
     const targetUser = users.find(u => u.id === userId);
-    if (targetUser?.role === 'admin') {
-      alert("Cannot ban another administrator.");
+    if (targetUser?.role === 'admin' && !currentAdminProfile?.isSuperAdmin) {
+      alert("Only a Super Admin can manage another administrator.");
       return;
     }
-    if (!currentAdminProfile?.adminRights?.canManageUsers) {
+    if (!currentAdminProfile?.isSuperAdmin && !currentAdminProfile?.adminRights?.canManageUsers) {
       alert("You do not have permission to manage users.");
       return;
     }
@@ -977,8 +1139,8 @@ const AdminDashboard = ({ setActiveTab, setSelectedMatchId, onCall }: {
 
   const toggleBlock = async (userId: string, currentStatus: boolean) => {
     const targetUser = users.find(u => u.id === userId);
-    if (targetUser?.role === 'admin') {
-      alert("Cannot block another administrator.");
+    if (targetUser?.role === 'admin' && !currentAdminProfile?.isSuperAdmin) {
+      alert("Only a Super Admin can manage another administrator.");
       return;
     }
     try {
@@ -1101,11 +1263,11 @@ const AdminDashboard = ({ setActiveTab, setSelectedMatchId, onCall }: {
 
   const deleteUser = async (userId: string) => {
     const targetUser = users.find(u => u.id === userId);
-    if (targetUser?.role === 'admin') {
-      alert("Cannot delete another administrator.");
+    if (targetUser?.role === 'admin' && !currentAdminProfile?.isSuperAdmin) {
+      alert("Only a Super Admin can delete another administrator.");
       return;
     }
-    if (!currentAdminProfile?.adminRights?.canDeleteUsers) {
+    if (!currentAdminProfile?.isSuperAdmin && !currentAdminProfile?.adminRights?.canDeleteUsers) {
       alert("You do not have permission to delete users.");
       return;
     }
@@ -1222,9 +1384,9 @@ const AdminDashboard = ({ setActiveTab, setSelectedMatchId, onCall }: {
           { id: 'location', label: 'Location Control', permission: 'canControlLocationPreferences' },
           { id: 'security', label: 'Security', permission: 'canManageSecurity' },
           { id: 'support', label: 'Support', permission: 'canManageSupport' },
-          { id: 'settings', label: 'App Settings', permission: 'canEditSettings' },
+          {id: 'settings', label: 'App Settings', permission: 'canEditSettings'},
         ].map((tab) => (
-          (currentAdminProfile?.adminRights as any)?.[tab.permission] && (
+          ((currentAdminProfile?.adminRights as any)?.[tab.permission] || currentAdminProfile?.isSuperAdmin) && (
             <button 
               key={tab.id}
               onClick={() => setActiveSubTab(tab.id as any)}
@@ -1237,7 +1399,18 @@ const AdminDashboard = ({ setActiveTab, setSelectedMatchId, onCall }: {
             </button>
           )
         ))}
-        {currentAdminProfile?.adminRights?.canManageAdmins && (
+        {currentAdminProfile?.isSuperAdmin && (
+          <button 
+            onClick={() => setActiveSubTab('admin_management')}
+            className={cn(
+              "px-4 py-2 rounded-full font-bold text-xs transition-all",
+              activeSubTab === 'admin_management' ? "bg-amber-500 text-white shadow-lg shadow-amber-500/20" : "bg-white text-amber-600 hover:bg-amber-50 border border-amber-100"
+            )}
+          >
+            Admin Management
+          </button>
+        )}
+        {(currentAdminProfile?.adminRights?.canManageAdmins || currentAdminProfile?.isSuperAdmin) && (
           <button 
             onClick={() => setShowCreateAdmin(true)}
             className="ml-auto px-6 py-2 rounded-full font-bold text-sm bg-amber-500 text-white shadow-lg shadow-amber-500/20 hover:bg-amber-600 transition-all flex items-center gap-2"
@@ -1247,6 +1420,70 @@ const AdminDashboard = ({ setActiveTab, setSelectedMatchId, onCall }: {
           </button>
         )}
       </div>
+
+      {activeSubTab === 'admin_management' && currentAdminProfile?.isSuperAdmin && (
+        <div className="bg-white rounded-[32px] border border-black/5 shadow-sm overflow-hidden">
+          <div className="p-8 border-b border-slate-100">
+            <h3 className="text-xl font-bold">Administrator Management</h3>
+            <p className="text-sm text-slate-500">Manage administrator accounts and their status.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Admin</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
+                  <th className="p-5 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.filter(u => u.role === 'admin').map(u => (
+                  <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                    <td className="p-5">
+                      <div className="flex items-center gap-3">
+                        <img src={u.images?.[0] || `https://picsum.photos/seed/${u.id}/100/100`} className="w-10 h-10 rounded-full object-cover" alt="" />
+                        <div>
+                          <div className="font-bold text-sm">{u.name}</div>
+                          <div className="text-xs text-slate-400">{u.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-5">
+                      <span className={cn(
+                        "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase",
+                        u.isDisabled ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"
+                      )}>
+                        {u.isDisabled ? 'Disabled' : 'Active'}
+                      </span>
+                    </td>
+                    <td className="p-5 text-right">
+                      {u.id !== user?.uid && (
+                        <button 
+                          onClick={async () => {
+                            if (window.confirm(`Are you sure you want to ${u.isDisabled ? 'enable' : 'disable'} this administrator?`)) {
+                              try {
+                                await updateDoc(doc(db, 'users', u.id), { isDisabled: !u.isDisabled });
+                              } catch (err) {
+                                handleFirestoreError(err, OperationType.UPDATE, `users/${u.id}`);
+                              }
+                            }
+                          }}
+                          className={cn(
+                            "px-4 py-2 rounded-xl font-bold text-xs transition-all",
+                            u.isDisabled ? "bg-green-50 text-green-600 hover:bg-green-100" : "bg-red-50 text-red-600 hover:bg-red-100"
+                          )}
+                        >
+                          {u.isDisabled ? 'Enable Admin' : 'Disable Admin'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {activeSubTab === 'users' && (
         <div className="bg-white rounded-[32px] border border-black/5 shadow-sm overflow-hidden">
@@ -2268,6 +2505,7 @@ const Navbar = ({ activeTab, setActiveTab, unreadCount }: any) => {
   const navItems = [
     { id: 'discover', label: 'Discover', icon: Search },
     { id: 'chat', label: 'Messages', icon: MessageCircle },
+    { id: 'calls', label: 'Calls', icon: Phone },
     { id: 'notifications', label: 'Notifications', icon: Bell, badge: unreadCount > 0 ? unreadCount : null },
     { id: 'profile', label: 'Profile', icon: UserIcon },
   ];
@@ -3338,6 +3576,7 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
     if (!otherUserId) return;
 
     const chatId = [user.uid, otherUserId].sort().join('_');
+    
     const q = query(
       collection(db, 'chats', chatId, 'messages'),
       orderBy('timestamp', 'asc'),
@@ -3345,7 +3584,17 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
     );
 
     const unsubscribe = onSnapshot(q, (snap) => {
-      setMessages(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setMessages(msgs);
+
+      // Mark unread messages from other user as read in real-time
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (data.senderId === otherUserId && !data.read) {
+          updateDoc(doc(db, 'chats', chatId, 'messages', d.id), { read: true })
+            .catch(err => console.error("Error marking message as read:", err));
+        }
+      });
     });
 
     return () => unsubscribe();
@@ -3360,7 +3609,8 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
       senderId: user.uid,
       receiverId: selectedMatch.otherUser.id,
       text: message,
-      timestamp: serverTimestamp()
+      timestamp: serverTimestamp(),
+      read: false
     };
 
     try {
@@ -3397,6 +3647,32 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
       setMessage(icebreaker);
     }
     setGeneratingIcebreaker(false);
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && selectedMatch && user) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert("Image is too large. Please choose an image under 2MB.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const chatId = [user.uid, selectedMatch.otherUser.id].sort().join('_');
+        try {
+          await addDoc(collection(db, 'chats', chatId, 'messages'), {
+            senderId: user.uid,
+            receiverId: selectedMatch.otherUser.id,
+            image: reader.result as string,
+            timestamp: serverTimestamp(),
+            read: false
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, `chats/${chatId}/messages`);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const deleteMatch = async (matchId: string) => {
@@ -3536,12 +3812,27 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
                         ? "bg-gradient-to-r from-primary to-secondary text-white rounded-tr-none" 
                         : "bg-slate-100 text-slate-800 rounded-tl-none"
                     )}>
+                      {msg.image && (
+                        <img 
+                          src={msg.image} 
+                          alt="Sent image" 
+                          className="max-w-full rounded-xl mb-2 cursor-pointer hover:opacity-90 transition-opacity" 
+                          onClick={() => window.open(msg.image, '_blank')}
+                        />
+                      )}
                       {msg.text}
                     </div>
                   </div>
-                  <span className="text-[10px] text-slate-400 mt-1">
-                    {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className="text-[10px] text-slate-400">
+                      {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    {msg.senderId === user?.uid && (
+                      <span className={cn("text-[10px] font-bold", msg.read ? "text-blue-500" : "text-slate-300")}>
+                        {msg.read ? "Read" : "Sent"}
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
               {messages.length === 0 && (
@@ -3552,6 +3843,20 @@ const Chat = ({ selectedMatchId, setSelectedMatchId, profile }: { selectedMatchI
             </div>
 
             <form onSubmit={sendMessage} className="p-4 border-t border-inherit flex gap-3 items-center">
+              <input 
+                type="file" 
+                id="chat-image" 
+                className="hidden" 
+                accept="image/*" 
+                onChange={handleImageUpload} 
+              />
+              <label 
+                htmlFor="chat-image"
+                className="p-2.5 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors cursor-pointer"
+                title="Send Image"
+              >
+                <ImagePlus size={20} />
+              </label>
               <button 
                 type="button"
                 onClick={handleIcebreaker}
@@ -3803,6 +4108,7 @@ const CallModal = ({ call, isCaller, onClose }: { call: any, isCaller: boolean, 
   const [status, setStatus] = useState<'connecting' | 'ringing' | 'connected' | 'ended'>(isCaller ? 'ringing' : 'connecting');
   const [otherUser, setOtherUser] = useState<UserType | null>(null);
   const [callError, setCallError] = useState<string | null>(null);
+  const [connectionTime, setConnectionTime] = useState(0);
   
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const unsubscribesRef = useRef<(() => void)[]>([]);
@@ -3838,6 +4144,14 @@ const CallModal = ({ call, isCaller, onClose }: { call: any, isCaller: boolean, 
 
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
+        pc.oniceconnectionstatechange = () => {
+          if (pc.iceConnectionState === 'connected') {
+            setStatus('connected');
+          } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+            cleanup();
+          }
+        };
+
         pc.ontrack = (event) => {
           if (isMounted) {
             setRemoteStream(event.streams[0]);
@@ -3861,7 +4175,12 @@ const CallModal = ({ call, isCaller, onClose }: { call: any, isCaller: boolean, 
           const unsub = onSnapshot(doc(db, 'calls', call.id), (snapshot) => {
             const data = snapshot.data();
             if (data?.answer && !pc.currentRemoteDescription) {
-              pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+              if (data.answer.sdp && data.answer.type) {
+                pc.setRemoteDescription(new RTCSessionDescription(data.answer))
+                  .catch(e => console.error("Error setting remote description (answer):", e));
+              } else {
+                console.warn("Received malformed answer:", data.answer);
+              }
             }
             if (data?.status === 'rejected' || data?.status === 'ended') {
               cleanup();
@@ -3869,7 +4188,11 @@ const CallModal = ({ call, isCaller, onClose }: { call: any, isCaller: boolean, 
           });
           unsubscribesRef.current.push(unsub);
         } else {
-          await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
+          if (call.offer?.sdp && call.offer?.type) {
+            await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
+          } else {
+            throw new Error("Invalid call offer received. The call may have been initiated incorrectly.");
+          }
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           await updateDoc(doc(db, 'calls', call.id), { answer: { sdp: answer.sdp, type: answer.type }, status: 'accepted' });
@@ -3884,14 +4207,33 @@ const CallModal = ({ call, isCaller, onClose }: { call: any, isCaller: boolean, 
         }
 
         const otherCandidatesCol = collection(db, 'calls', call.id, isCaller ? 'receiverCandidates' : 'callerCandidates');
+        const iceCandidateQueue: RTCIceCandidateInit[] = [];
+
         const unsubCandidates = onSnapshot(otherCandidatesCol, (snapshot) => {
           snapshot.docChanges().forEach((change) => {
             if (change.type === 'added') {
-              pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+              const candidateData = change.doc.data() as RTCIceCandidateInit;
+              if (pc.remoteDescription) {
+                pc.addIceCandidate(new RTCIceCandidate(candidateData)).catch(e => console.error("Error adding ICE candidate:", e));
+              } else {
+                iceCandidateQueue.push(candidateData);
+              }
             }
           });
         });
         unsubscribesRef.current.push(unsubCandidates);
+
+        // Process queued candidates once remote description is set
+        const originalSetRemoteDescription = pc.setRemoteDescription.bind(pc);
+        pc.setRemoteDescription = async (description) => {
+          await originalSetRemoteDescription(description);
+          while (iceCandidateQueue.length > 0) {
+            const candidate = iceCandidateQueue.shift();
+            if (candidate) {
+              pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.error("Error adding queued ICE candidate:", e));
+            }
+          }
+        };
 
       } catch (err) {
         console.error("Call error:", err);
@@ -3907,6 +4249,22 @@ const CallModal = ({ call, isCaller, onClose }: { call: any, isCaller: boolean, 
       cleanup();
     };
   }, []);
+
+  useEffect(() => {
+    let interval: any;
+    if (status === 'connected') {
+      interval = setInterval(() => {
+        setConnectionTime(prev => prev + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [status]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const cleanup = () => {
     unsubscribesRef.current.forEach(unsub => unsub());
@@ -3974,7 +4332,9 @@ const CallModal = ({ call, isCaller, onClose }: { call: any, isCaller: boolean, 
               />
             </div>
             <h2 className="text-3xl font-bold text-white mb-2">{otherUser?.name || 'Connecting...'}</h2>
-            <p className="text-slate-400 animate-pulse">{status === 'ringing' ? 'Ringing...' : 'Voice Call'}</p>
+            <p className="text-slate-400 animate-pulse">
+              {status === 'ringing' ? 'Ringing...' : status === 'connected' ? formatTime(connectionTime) : 'Connecting...'}
+            </p>
           </div>
         )}
 
@@ -4817,6 +5177,20 @@ const ProfileView = () => {
     }
   };
 
+  const calculateCompletion = () => {
+    if (!profile) return 0;
+    const fields = [
+      'name', 'age', 'gender', 'lookingFor', 'bio', 'interests', 
+      'images', 'location', 'height', 'education', 'isVerified'
+    ];
+    const filled = fields.filter(f => {
+      const val = (profile as any)[f];
+      if (Array.isArray(val)) return val.length > 0;
+      return !!val;
+    });
+    return Math.round((filled.length / fields.length) * 100);
+  };
+
   if (!profile) {
     return (
       <div className="pt-32 pb-12 px-4 max-w-4xl mx-auto text-center">
@@ -4844,8 +5218,30 @@ const ProfileView = () => {
     );
   }
 
+  const completion = calculateCompletion();
+
   return (
     <div className="pt-24 pb-12 px-4 max-w-4xl mx-auto">
+      <div className="mb-12">
+        <div className="flex justify-between items-end mb-3">
+          <div>
+            <h2 className="text-3xl font-bold mb-1">Your Profile</h2>
+            <p className="text-slate-500 text-sm">Manage your identity and preferences</p>
+          </div>
+          <div className="text-right">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Profile Completion</span>
+            <div className="text-xl font-bold text-primary">{completion}%</div>
+          </div>
+        </div>
+        <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+          <motion.div 
+            initial={{ width: 0 }}
+            animate={{ width: `${completion}%` }}
+            className="h-full bg-gradient-to-r from-primary to-secondary"
+          />
+        </div>
+      </div>
+
       <div className="bg-white rounded-[40px] shadow-xl overflow-hidden border border-black/5">
         <div className="relative h-64 bg-gradient-to-r from-primary via-secondary to-accent">
           <div className="absolute -bottom-16 left-8">
@@ -6534,6 +6930,17 @@ function AppContent() {
               exit={{ opacity: 0, y: -20 }}
             >
               <Notifications />
+            </motion.div>
+          )}
+
+          {activeTab === 'calls' && (
+            <motion.div
+              key="calls"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <CallHistory />
             </motion.div>
           )}
 

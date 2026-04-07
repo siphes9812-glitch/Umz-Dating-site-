@@ -34,6 +34,8 @@ export interface User {
   drinking: 'never' | 'occasionally' | 'socially' | 'regularly';
   relationshipGoal: 'dating' | 'friendship' | 'long-term' | 'marriage';
   role?: 'admin' | 'user';
+  isSuperAdmin?: boolean;
+  isDisabled?: boolean;
   email?: string;
   adminRights?: AdminRights;
   isBanned?: boolean;
